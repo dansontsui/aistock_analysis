@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { DailyReport, PortfolioItem } from '../types';
 import StockCard from './StockCard';
-import { updateReportPrices, updateStockPricesAPI, updateEntryPriceAPI } from '../services/apiService';
+import { updateReportPrices, updateStockPricesAPI, updateEntryPriceAPI, clearHistoryAPI } from '../services/apiService';
 
 interface HistoryTableProps {
   reports: DailyReport[];
@@ -93,6 +93,28 @@ const HistoryTable: React.FC<HistoryTableProps> = ({ reports, onRefresh }) => {
       {reports.length > 1 && (
         <div className="text-center">
           <p className="text-xs text-slate-400">已隱藏 {reports.length - 1} 筆歷史紀錄</p>
+        </div>
+      )}
+
+      {reports.length > 0 && (
+        <div className="flex justify-center mt-8 pt-8 border-t border-slate-200">
+          <button
+            onClick={async () => {
+              const pwd = prompt("請輸入密碼以清除所有歷史紀錄：");
+              if (pwd) {
+                try {
+                  await clearHistoryAPI(pwd);
+                  alert("清除成功");
+                  onRefresh();
+                } catch (e: any) {
+                  alert(e.message || "清除失敗");
+                }
+              }
+            }}
+            className="text-xs text-red-400 hover:text-red-600 font-mono hover:underline"
+          >
+            [危險操作] 清除歷史紀錄
+          </button>
         </div>
       )}
     </div>

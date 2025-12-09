@@ -176,3 +176,16 @@ export const updateEntryPriceAPI = async (reportId: string, code: string, price:
     body: JSON.stringify({ code, price })
   });
 };
+
+export const clearHistoryAPI = async (password: string) => {
+  const response = await fetchWithFailover('/api/admin/clear-history', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password })
+  });
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.error || "清除失敗");
+  }
+  return response.json();
+};

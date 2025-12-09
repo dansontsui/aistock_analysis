@@ -67,7 +67,7 @@ const StockCard: React.FC<StockCardProps> = ({ stock, type, onUpdatePrice }) => 
         </div>
       </div>
 
-      <p className="text-sm text-slate-600 mb-3 line-clamp-3">
+      <p className="text-sm text-slate-600 mb-3 whitespace-pre-line leading-relaxed">
         {reason}
       </p>
 

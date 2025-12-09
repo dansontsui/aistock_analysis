@@ -6,6 +6,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from "@google/genai";
 import { sendDailyReportEmail } from './services/emailService.js';
+import { analyzeStockTechnicals } from './services/financeService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -113,19 +114,34 @@ const generateContentWithFallback = async (ai, prompt, config) => {
 const getTodayString = () => new Date().toISOString().split('T')[0];
 const extractJson = (text) => {
   if (!text) return "";
+  // 1. Remove Markdown code blocks first
   let clean = text.replace(/```json\s*/g, "").replace(/```\s*$/g, "").replace(/```/g, "").trim();
-  const firstSquare = clean.indexOf('[');
-  const firstCurly = clean.indexOf('{');
-  let startIndex = -1, endIndex = -1;
 
-  if (firstSquare !== -1 && (firstCurly === -1 || firstSquare < firstCurly)) {
-    startIndex = firstSquare;
-    endIndex = clean.lastIndexOf(']');
+  // 2. Find the JSON object or array
+  const firstCurly = clean.indexOf('{');
+  const firstSquare = clean.indexOf('[');
+  let startIndex = -1;
+
+  // Determine start based on which appears first
+  if (firstCurly !== -1 && firstSquare !== -1) {
+    startIndex = Math.min(firstCurly, firstSquare);
   } else if (firstCurly !== -1) {
     startIndex = firstCurly;
-    endIndex = clean.lastIndexOf('}');
+  } else if (firstSquare !== -1) {
+    startIndex = firstSquare;
   }
-  return (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) ? clean.substring(startIndex, endIndex + 1) : clean;
+
+  if (startIndex !== -1) {
+    // Determine corresponding end char
+    const isArray = clean[startIndex] === '[';
+    const endChar = isArray ? ']' : '}';
+    const endIndex = clean.lastIndexOf(endChar);
+    if (endIndex > startIndex) {
+      return clean.substring(startIndex, endIndex + 1);
+    }
+  }
+
+  return clean;
 };
 
 // --- NEW Helper: Get Real-Time Prices using AI & Search ---
@@ -538,18 +554,20 @@ const runDailyAnalysis = async () => {
       });
     }
 
-    // 2. Portfolio Rebalancing (Finalists)
-    console.log("[Automation] Step 2: Rebalancing Portfolio...");
+    // --- 2. Technical Analysis Integration ---
+    console.log("[Automation] Step 2.5: Running Technical Analysis...");
 
-    // Fetch previous portfolio
-    let currentPortfolio = [];
-    try {
-      const latestReport = db.prepare('SELECT data FROM daily_reports ORDER BY timestamp DESC LIMIT 1').get();
-      if (latestReport) {
-        const d = JSON.parse(latestReport.data);
-        if (d.finalists && Array.isArray(d.finalists)) currentPortfolio = d.finalists;
-      }
-    } catch (e) { console.warn("[DB] No previous portfolio found."); }
+    // Analyze Current Portfolio
+    const portfolioWithTA = await Promise.all(currentPortfolio.map(async (stock) => {
+      const ta = await analyzeStockTechnicals(stock.code);
+      return { ...stock, ta };
+    }));
+
+    // Analyze Candidates (optional, for filtering)
+    const candidatesWithTA = await Promise.all(candidates.map(async (stock) => {
+      const ta = await analyzeStockTechnicals(stock.code);
+      return { ...stock, ta };
+    }));
 
     const finPrompt = `
         你是一位專業的基金經理人，負責管理一個「最多持股 5 檔」的台股投資組合。
@@ -558,22 +576,42 @@ const runDailyAnalysis = async () => {
         市場概況：${newsSummary}
 
         【目前持倉 (Current Portfolio)】：
-        ${JSON.stringify(currentPortfolio)}
+        (包含技術分析訊號，請優先遵守 TA ACTION 指令)
+        ${JSON.stringify(portfolioWithTA.map(p => ({
+      code: p.code,
+      name: p.name,
+      entryPrice: p.entryPrice,
+      currentMA_Status: p.ta.technicalReason,
+      TA_ACTION: p.ta.action, // SELL, HOLD
+      TA_SIGNALS: p.ta.signals // TREND_REVERSAL, HIGH_BIAS_REVERSAL, etc.
+    })))}
 
         【今日觀察名單 (New Candidates)】：
-        ${JSON.stringify(candidates)}
+        ${JSON.stringify(candidatesWithTA.map(c => ({
+      code: c.code,
+      name: c.name,
+      technical_view: c.ta.technicalReason,
+      is_strong_trend: c.ta.signals.includes('STRONG_UPTREND')
+    })))}
 
         【決策任務】：
-        1. 檢視「目前持倉」與「今日觀察名單」。
-        2. 決定是否要「賣出」(剔除) 表現不佳或前景轉弱的持股。
-        3. 決定是否要「買入」(新增) 強力看好的新標的。
-        4. **嚴格限制**：最終持股名單 (原有+新增) **不可超過 5 檔**。
-        5. 若目前持倉表現良好且無更好標的，可維持現狀。
+        1. **優先執行技術分析指令 (Hard Rules)**：
+           - **賣出規則 (雙軌制)**：
+             - 若 TA_ACTION 為 "SELL"，**必須立刻賣出**。
+           - **買入規則**：
+             - 優先選擇強勢股 (股價 > 月線 > 季線)。
+             - **禁止買入** 空頭排列 (股價 < 季線) 的股票。
+
+        2. **撰寫完整理由 (reason)**：
+           - **必須包含「進場/決策當下的技術面狀況」** (例如：目前股價 1480 站穩月線，均線多頭排列)。
+           - 請勿簡略，請完整說明看好的產業趨勢以及技術面支撐點位。
+
+        3. 決定是否要「賣出」或「買入」新標的 (嚴格限制總持股 5 檔)。
 
         【輸出格式】：僅限 JSON 陣列 (最終的持股名單)。
         [
-           { "code": "2330", "name": "台積電", "entryPrice": 500, "reason": "續抱...", "industry": "...", "status": "HOLD" },
-           { "code": "2454", "name": "聯發科", "entryPrice": 0, "reason": "新納入...", "industry": "...", "status": "BUY" }
+           { "code": "2330", "name": "台積電", "entryPrice": 500, "reason": "【續抱】技術面強勢：股價(1480)站穩月線之上，且MA5穿越MA10形成黃金交叉。基本面：受惠AI先進封裝產能供不應求...", "industry": "半導體", "status": "HOLD" },
+           { "code": "2454", "name": "聯發科", "entryPrice": 0, "reason": "【新納入】技術面翻多：股價突破季線反壓，RSI轉強。天璣9400晶片出貨暢旺...", "industry": "IC設計", "status": "BUY" }
         ]
     `;
     const finResponse = await generateContentWithFallback(ai, finPrompt, { tools: [{ googleSearch: {} }] });
@@ -648,6 +686,43 @@ const runDailyAnalysis = async () => {
     return { success: false, error: error.message };
   }
 };
+
+// 9. Update Price for Report Item
+app.post('/api/reports/:id/entry-price', async (req, res) => {
+  const { code, price } = req.body;
+  if (!code || price === undefined) return res.status(400).json({ error: "Missing code or price" });
+
+  try {
+    const report = db.prepare('SELECT data FROM daily_reports WHERE id = ?').get(req.params.id);
+    if (!report) return res.status(404).json({ error: "Report not found" });
+
+    const data = JSON.parse(report.data);
+    if (data.finalists) {
+      const idx = data.finalists.findIndex(f => f.code === code);
+      if (idx !== -1) {
+        data.finalists[idx].entryPrice = parseFloat(price);
+        const currentPrice = data.finalists[idx].currentPrice || 0;
+        data.finalists[idx].roi = price > 0 ? ((currentPrice - price) / price) * 100 : 0;
+        db.prepare('UPDATE daily_reports SET data = ? WHERE id = ?').run(JSON.stringify(data), req.params.id);
+        return res.json({ success: true });
+      }
+    }
+    res.status(404).json({ error: "Stock code not found" });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 10. Clear All History (Protected)
+app.delete('/api/admin/clear-history', (req, res) => {
+  const { password } = req.body;
+  if (password !== 'abcd1234') return res.status(401).json({ error: "密碼錯誤" });
+  try {
+    db.prepare('DELETE FROM daily_reports').run();
+    console.log('[Admin] History cleared.');
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: "清除失敗" }); }
+});
 
 // CRON Endpoint for Cloud Scheduler
 app.get('/api/cron/trigger', async (req, res) => {
