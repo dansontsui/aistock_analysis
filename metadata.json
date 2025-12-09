@@ -1,0 +1,5 @@
+{
+  "name": "台股 AI 分析師",
+  "description": "針對台灣股市的 AI 日常選股工具。它會分析新聞以生成 10 檔候選股，並進一步篩選出 3 檔精選股，透過 SQLite 資料庫追蹤績效。",
+  "requestFramePermissions": []
+}

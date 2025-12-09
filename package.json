@@ -1,0 +1,33 @@
+{
+  "name": "台股-ai-分析師",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "start": "node server.js",
+    "server": "node server.js",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@google/genai": "^1.31.0",
+    "better-sqlite3": "^12.5.0",
+    "cors": "^2.8.5",
+    "express": "^5.2.1",
+    "firebase": "^12.6.0",
+    "fs": "^0.0.1-security",
+    "nodemailer": "^7.0.11",
+    "path": "^0.12.7",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1",
+    "url": "^0.11.4",
+    "yahoo-finance2": "^3.10.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0"
+  }
+}
