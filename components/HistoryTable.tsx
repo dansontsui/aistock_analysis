@@ -89,35 +89,82 @@ const HistoryTable: React.FC<HistoryTableProps> = ({ reports, onRefresh }) => {
         </div>
       </div>
 
-      {/* Optional: Show simpler log of past analysis dates if needed, or hide completely as per user request */}
-      {reports.length > 1 && (
-        <div className="text-center">
-          <p className="text-xs text-slate-400">已隱藏 {reports.length - 1} 筆歷史紀錄</p>
-        </div>
-      )}
+      {/* Sold Stocks Section */}
+      {
+        report.sold && report.sold.length > 0 && (
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+            <div className="bg-slate-50 px-6 py-4 border-b border-slate-200">
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                📉 已賣出/剔除 (Sold)
+              </h3>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left">
+                <thead className="bg-slate-50 text-slate-500 font-medium">
+                  <tr>
+                    <th className="px-6 py-3">代號</th>
+                    <th className="px-6 py-3">名稱</th>
+                    <th className="px-6 py-3">進場價</th>
+                    <th className="px-6 py-3">出場價</th>
+                    <th className="px-6 py-3">報酬率</th>
+                    <th className="px-6 py-3">賣出理由</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {report.sold.map((s, idx) => (
+                    <tr key={idx} className="hover:bg-slate-50">
+                      <td className="px-6 py-4 font-bold text-slate-700">{s.code}</td>
+                      <td className="px-6 py-4 text-slate-600">{s.name}</td>
+                      <td className="px-6 py-4 text-slate-500">{s.entryPrice}</td>
+                      <td className="px-6 py-4 text-slate-500">{s.exitPrice}</td>
+                      <td className={`px-6 py-4 font-bold ${s.roi >= 0 ? 'text-red-500' : 'text-emerald-500'}`}>
+                        {s.roi ? s.roi.toFixed(2) : 0}%
+                      </td>
+                      <td className="px-6 py-4 text-slate-600 max-w-xs whitespace-pre-wrap">
+                        {s.reason || 'AI 綜合判斷賣出/換股操作'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
+      }
 
-      {reports.length > 0 && (
-        <div className="flex justify-center mt-8 pt-8 border-t border-slate-200">
-          <button
-            onClick={async () => {
-              const pwd = prompt("請輸入密碼以清除所有歷史紀錄：");
-              if (pwd) {
-                try {
-                  await clearHistoryAPI(pwd);
-                  alert("清除成功");
-                  onRefresh();
-                } catch (e: any) {
-                  alert(e.message || "清除失敗");
+      {/* Optional: Show simpler log of past analysis dates if needed, or hide completely as per user request */}
+      {
+        reports.length > 1 && (
+          <div className="text-center">
+            <p className="text-xs text-slate-400">已隱藏 {reports.length - 1} 筆歷史紀錄</p>
+          </div>
+        )
+      }
+
+      {
+        reports.length > 0 && (
+          <div className="flex justify-center mt-8 pt-8 border-t border-slate-200">
+            <button
+              onClick={async () => {
+                const pwd = prompt("請輸入密碼以清除所有歷史紀錄：");
+                if (pwd) {
+                  try {
+                    await clearHistoryAPI(pwd);
+                    alert("清除成功");
+                    onRefresh();
+                  } catch (e: any) {
+                    alert(e.message || "清除失敗");
+                  }
                 }
-              }
-            }}
-            className="text-xs text-red-400 hover:text-red-600 font-mono hover:underline"
-          >
-            [危險操作] 清除歷史紀錄
-          </button>
-        </div>
-      )}
-    </div>
+              }}
+              className="text-xs text-red-400 hover:text-red-600 font-mono hover:underline"
+            >
+              [危險操作] 清除歷史紀錄
+            </button>
+          </div>
+        )
+      }
+    </div >
   );
 };
 

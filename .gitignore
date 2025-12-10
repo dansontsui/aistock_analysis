@@ -24,3 +24,8 @@ dist-ssr
 *.sw?
 
 cloud_run_deploy.md
+
+# Database
+*.db
+*.db-shm
+*.db-wal

@@ -5,6 +5,7 @@ import { StockCandidate, PortfolioItem, AnalysisStatus, DailyReport, WebSource }
 import StockCard from './components/StockCard';
 import HistoryTable from './components/HistoryTable';
 import EmailSubscription from './components/EmailSubscription';
+import SettingsPanel from './components/SettingsPanel';
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<AnalysisStatus>(AnalysisStatus.IDLE);
@@ -198,7 +199,7 @@ const App: React.FC = () => {
               onClick={() => setActiveTab('settings')}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'settings' ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
             >
-              Email 設定
+              系統設定 (System)
             </button>
           </div>
         </div>
@@ -353,8 +354,9 @@ const App: React.FC = () => {
         )}
 
         {activeTab === 'settings' && (
-          <div className="max-w-3xl mx-auto">
+          <div className="max-w-3xl mx-auto space-y-12">
             <EmailSubscription />
+            <SettingsPanel />
           </div>
         )}
 

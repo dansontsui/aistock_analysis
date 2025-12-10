@@ -3,7 +3,7 @@ import { SMA } from 'technicalindicators';
 
 // Create instance with options
 const yahooFinance = new YahooFinance({
-    suppressNotices: ['yahooSurvey', 'deprecated']
+    suppressNotices: ['yahooSurvey', 'deprecated', 'ripHistorical']
 });
 
 /**
@@ -22,10 +22,32 @@ export async function analyzeStockTechnicals(code) {
 
         const queryOptions = {
             period1: start.toISOString().split('T')[0],
+            period2: end.toISOString().split('T')[0], // Fix: Explicitly set end date
             interval: '1d'
         };
 
-        const historical = await yahooFinance.historical(symbol, queryOptions);
+        let historical;
+        let retries = 3;
+        while (retries > 0) {
+            try {
+                historical = await yahooFinance.historical(symbol, queryOptions);
+                break; // Success
+            } catch (err) {
+                // Fail immediately for permanent errors
+                if (err.message.includes('No data found') || err.message.includes('delisted')) {
+                    throw err;
+                }
+
+                retries--;
+                if (retries === 0) {
+                    // If it's the last retry, throw to be caught by outer catch
+                    throw err;
+                }
+                console.warn(`[FinanceService] Failed to fetch ${symbol} (temporary), retries left: ${retries}. Error: ${err.message}`);
+                // Wait 1 second before retry
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+        }
 
         if (!historical || historical.length < 60) {
             console.warn(`[FinanceService] Not enough data for ${symbol}`);
@@ -134,6 +156,28 @@ export async function analyzeStockTechnicals(code) {
 
     } catch (error) {
         console.error(`[FinanceService] Error analyzing ${code}:`, error.message);
-        return { code, error: error.message, action: 'NEUTRAL', technicalReason: '技術分析數據取得失敗' };
+        return {
+            code,
+            error: error.message,
+            action: 'NEUTRAL',
+            technicalReason: '技術分析數據取得失敗',
+            signals: [] // Fix: Ensure signals array always exists
+        };
+    }
+}
+
+/**
+ * Get real-time/delayed price from Yahoo Finance
+ * @param {string} code 
+ * @returns {Promise<number>} price (or 0 if failed)
+ */
+export async function getStockPrice(code) {
+    try {
+        const symbol = `${code}.TW`;
+        const quote = await yahooFinance.quote(symbol);
+        return quote.regularMarketPrice || 0;
+    } catch (e) {
+        console.warn(`[FinanceService] Failed to get price for ${code}:`, e.message);
+        return 0;
     }
 }
