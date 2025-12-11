@@ -6,6 +6,7 @@ import StockCard from './components/StockCard';
 import HistoryTable from './components/HistoryTable';
 import EmailSubscription from './components/EmailSubscription';
 import SettingsPanel from './components/SettingsPanel';
+import PerformanceDashboard from './components/PerformanceDashboard';
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<AnalysisStatus>(AnalysisStatus.IDLE);
@@ -363,7 +364,10 @@ const App: React.FC = () => {
         )}
 
         {activeTab === 'history' && (
-          <HistoryTable reports={history} onRefresh={loadHistory} />
+          <div className="space-y-8">
+            <PerformanceDashboard />
+            <HistoryTable reports={history} onRefresh={loadHistory} />
+          </div>
         )}
 
         {activeTab === 'settings' && (

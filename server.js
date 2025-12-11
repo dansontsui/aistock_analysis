@@ -626,6 +626,59 @@ app.get('/api/reports', (req, res) => {
   }
 });
 
+// Reports: Get Performance Stats
+app.get('/api/performance', (req, res) => {
+  try {
+    const rows = db.prepare('SELECT data, timestamp FROM daily_reports ORDER BY timestamp ASC').all();
+    const allTrades = [];
+
+    rows.forEach(row => {
+      try {
+        const d = JSON.parse(row.data);
+        if (d.sold && Array.isArray(d.sold)) {
+          d.sold.forEach(trade => {
+            allTrades.push({
+              ...trade,
+              exitDate: trade.soldDate || new Date(row.timestamp).toISOString().split('T')[0], // Fallback to report date
+              timestamp: row.timestamp // Approximate timestamp
+            });
+          });
+        }
+      } catch (e) { /* skip bad rows */ }
+    });
+
+    const now = Date.now();
+    const oneDay = 24 * 60 * 60 * 1000;
+
+    const calculateStats = (days) => {
+      const cutoff = now - (days * oneDay);
+      const periodTrades = allTrades.filter(t => t.timestamp >= cutoff);
+      const count = periodTrades.length;
+      const wins = periodTrades.filter(t => t.roi > 0).length;
+      const winRate = count > 0 ? (wins / count) * 100 : 0;
+      const avgRoi = count > 0 ? periodTrades.reduce((sum, t) => sum + (t.roi || 0), 0) / count : 0;
+      const totalRoi = periodTrades.reduce((sum, t) => sum + (t.roi || 0), 0); // Simple summation of ROI%
+
+      return { count, wins, winRate, avgRoi, totalRoi };
+    };
+
+    const stats = {
+      month1: calculateStats(30),
+      month3: calculateStats(90),
+      month6: calculateStats(180),
+      year1: calculateStats(365),
+      allTime: calculateStats(9999)
+    };
+
+    console.log(`[Performance] Calculated stats based on ${allTrades.length} sold trades.`);
+    res.json(stats);
+
+  } catch (error) {
+    console.error("[API Error]", error);
+    res.status(500).json({ error: 'Stats Error' });
+  }
+});
+
 // Reports: Create
 app.post('/api/reports', (req, res) => {
   try {
