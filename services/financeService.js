@@ -1,5 +1,5 @@
 import YahooFinance from 'yahoo-finance2';
-import { SMA } from 'technicalindicators';
+import { SMA, RSI } from 'technicalindicators';
 
 // Create instance with options
 const yahooFinance = new YahooFinance({
@@ -88,6 +88,11 @@ export async function analyzeStockTechnicals(code) {
         const ma20 = SMA.calculate({ period: 20, values: closes });
         const ma60 = SMA.calculate({ period: 60, values: closes });
 
+        // Calculate RSI (Period 14)
+        const rsiInput = { values: closes, period: 14 };
+        const rsiValues = RSI.calculate(rsiInput);
+        const currentRSI = rsiValues.length > 0 ? rsiValues[rsiValues.length - 1] : 50;
+
         // Get latest values
         const currentMA5 = ma5[ma5.length - 1];
         const currentMA10 = ma10[ma10.length - 1];
@@ -97,71 +102,53 @@ export async function analyzeStockTechnicals(code) {
         // 3. Logic Implementation
         const analysis = {
             code,
-            symbol: successfulSymbol, // useful for debug
+            symbol: successfulSymbol,
             price: lastClose,
+            change: lastClose - prevClose,
             ma5: currentMA5,
             ma10: currentMA10,
             ma20: currentMA20,
             ma60: currentMA60,
+            rsi: currentRSI,
+
+            // Signals
             signals: [],
-            action: 'HOLD', // Default
+            action: 'NEUTRAL',
             technicalReason: ''
         };
 
-        // --- A. Exit Strategy 1: Trend Reversal (防守) ---
-        const isBelowMA20 = lastClose < currentMA20;
-        const isMomentumWeak = (currentMA5 < currentMA10) || (prevClose < currentMA20 && lastClose < currentMA20);
-
-        if (isBelowMA20 && isMomentumWeak) {
-            analysis.signals.push('TREND_REVERSAL');
+        // --- RSI Firewall Logic ---
+        // BUY Logic: RSI > 55 (Strong Momentum)
+        // SELL Logic: RSI < 45 (Weak Momentum)
+        if (currentRSI > 55) {
+            analysis.signals.push('RSI_BULLISH');
+            analysis.action = 'BUY';
+            analysis.technicalReason += `RSI過熱(${currentRSI.toFixed(1)} > 55) 動能強勁; `;
+        } else if (currentRSI < 45) {
+            analysis.signals.push('RSI_BEARISH');
             analysis.action = 'SELL';
-            analysis.technicalReason += '跌破月線且動能轉弱(MA5<MA10或連兩日收黑)，趨勢反轉出場。';
+            analysis.technicalReason += `RSI轉弱(${currentRSI.toFixed(1)} < 45) 動能不足; `;
+        } else {
+            analysis.technicalReason += `RSI盤整(${currentRSI.toFixed(1)}); `;
         }
 
-        // --- B. Exit Strategy 2: Trailing Stop (停利) ---
-        const recentCloses = closes.slice(-20);
-        const recentMA20s = ma20.slice(-20);
-        let maxBias = 0;
-        for (let i = 0; i < recentCloses.length; i++) {
-            if (recentMA20s[i]) {
-                const bias = (recentCloses[i] - recentMA20s[i]) / recentMA20s[i];
-                if (bias > maxBias) maxBias = bias;
-            }
-        }
-        const isHighBiasReversal = (maxBias > 0.15) && (lastClose < currentMA10);
-
-        const recentHigh = Math.max(...highs.slice(-60));
-        const drawdown = (recentHigh - lastClose) / recentHigh;
-        const isHighDrawdown = drawdown > 0.10;
-
-        if (isHighBiasReversal) {
-            analysis.signals.push('HIGH_BIAS_REVERSAL');
-            analysis.action = 'SELL';
-            analysis.technicalReason += '乖離過大後跌破 10 日線，獲利了結。';
-        } else if (isHighDrawdown) {
-            analysis.signals.push('high_drawdown');
-            analysis.action = 'SELL';
-            analysis.technicalReason += `從近期高點(${recentHigh})回檔超過 10%，執行停利保護。`;
+        // MA Logic (Secondary Confirmation)
+        if (lastClose > currentMA20) {
+            analysis.signals.push('MA20_BULLISH');
+            // If RSI is OK but price > MA20, it's a good HOLD/BUY context
+            if (analysis.action === 'NEUTRAL') analysis.action = 'HOLD';
+        } else {
+            analysis.signals.push('MA20_BEARISH');
+            // Price below MA20 is dangerous
+            if (analysis.action === 'HOLD') analysis.action = 'SELL';
         }
 
-        // --- C. Buy Strategy Criteria ---
-        const isStrongUptrend = (lastClose > currentMA20) && (currentMA20 > currentMA60);
-        if (isStrongUptrend) {
-            analysis.signals.push('STRONG_UPTREND');
-            if (analysis.action !== 'SELL') {
-                analysis.action = 'BUY_OR_HOLD';
-                analysis.technicalReason = '股價位於月線之上且均線多頭排列，技術面強勢。';
-            }
-        } else if (lastClose < currentMA60) {
-            analysis.signals.push('WEAK_TREND');
-            if (analysis.action !== 'SELL') {
-                analysis.technicalReason += '股價低於季線，長線偏弱。';
-            }
-        }
+        // Final consolidation of reason
+        if (analysis.action === 'BUY') analysis.technicalReason = `✅ [強勢] ${analysis.technicalReason}`;
+        if (analysis.action === 'SELL') analysis.technicalReason = `❌ [弱勢] ${analysis.technicalReason}`;
 
         return analysis;
-
-    } catch (error) {
+    } catch (err) {
         console.error(`[FinanceService] Error analyzing ${code}:`, error.message);
         return {
             code,

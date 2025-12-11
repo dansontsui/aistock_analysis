@@ -636,19 +636,111 @@ app.post('/api/reports', (req, res) => {
   } catch (error) { res.status(500).json({ error: 'Save Failed' }); }
 });
 
-// Reports: Update Prices
-app.put('/api/reports/:id/prices', (req, res) => {
+// Reports: Update Prices & Trigger Auto-Decision
+app.put('/api/reports/:id/prices', async (req, res) => {
   try {
     const { id } = req.params;
-    const { finalists } = req.body;
+    const { finalists } = req.body; // Frontend provided prices (reference)
+
     const row = db.prepare('SELECT data FROM daily_reports WHERE id = ?').get(id);
     if (!row) return res.status(404).json({ error: 'Not found' });
 
-    const currentData = JSON.parse(row.data);
-    const newData = { ...currentData, finalists };
+    let currentData = JSON.parse(row.data);
+    let currentPortfolio = currentData.finalists || [];
+    let candidates = currentData.candidates || [];
+    let soldList = currentData.sold || [];
+    let nextPortfolio = [];
+
+    // --- Technical Firewall Logic ---
+    console.log(`[Auto-Decision] Re-evaluating Portfolio for Report ${id}...`);
+
+    // 1. Sell Check (RSI < 45 or Loss > 10%)
+    for (const stock of currentPortfolio) {
+      try {
+        // Fetch fresh technicals
+        const ta = await analyzeStockTechnicals(stock.code);
+        const currentPrice = ta.price || stock.price; // Fallback
+        const entryPrice = stock.entryPrice || currentPrice;
+        const roi = ((currentPrice - entryPrice) / entryPrice) * 100;
+
+        let shouldSell = false;
+        let sellReason = "";
+
+        // Rule A: RSI < 45
+        if (ta.rsi < 45) {
+          shouldSell = true;
+          sellReason = `[Auto] RSI轉弱(${ta.rsi.toFixed(1)} < 45)`;
+        }
+        // Rule B: Hard Stop Loss > 10%
+        else if (roi < -10) {
+          shouldSell = true;
+          sellReason = `[Auto] 虧損過大(${roi.toFixed(1)}%)`;
+        }
+
+        if (shouldSell) {
+          soldList.push({
+            ...stock,
+            exitPrice: currentPrice,
+            roi: roi,
+            reason: sellReason,
+            soldDate: new Date().toISOString().split('T')[0]
+          });
+          console.log(`[Auto-Decision] SOLD ${stock.name}: ${sellReason}`);
+        } else {
+          // Keep holding
+          nextPortfolio.push({
+            ...stock,
+            price: currentPrice,
+            roi: roi, // Update ROI display
+            status: 'HOLD',
+            reason: ta.technicalReason || stock.reason
+          });
+        }
+      } catch (e) {
+        console.error(`[Auto-Decision] Error processing ${stock.code}:`, e);
+        nextPortfolio.push(stock); // Keep if error
+      }
+    }
+
+    // 2. Buy Check (If slots available < 5)
+    if (nextPortfolio.length < 5) {
+      console.log(`[Auto-Decision] Portfolio has space (${nextPortfolio.length}/5). Checking candidates...`);
+      for (const candidate of candidates) {
+        if (nextPortfolio.length >= 5) break;
+
+        // Skip if already in portfolio or sold today
+        if (nextPortfolio.some(p => p.code === candidate.code)) continue;
+        // if (soldList.some(s => s.code === candidate.code && s.soldDate === today)) continue; // Optional: Don't buy back same day
+
+        try {
+          const ta = await analyzeStockTechnicals(candidate.code);
+          // Rule: RSI > 55 to Buy
+          if (ta.rsi > 55) {
+            nextPortfolio.push({
+              code: candidate.code,
+              name: candidate.name,
+              entryPrice: ta.price, // New Entry
+              price: ta.price,
+              industry: candidate.theme || 'Auto-Pick',
+              status: 'BUY',
+              reason: `[Auto] RSI轉強(${ta.rsi.toFixed(1)} > 55)`,
+              roi: 0
+            });
+            console.log(`[Auto-Decision] BOUGHT ${candidate.name}: RSI=${ta.rsi.toFixed(1)}`);
+          }
+        } catch (e) { console.error(`[Auto-Decision] Error checking candidate ${candidate.code}`, e); }
+      }
+    }
+
+    const newData = { ...currentData, finalists: nextPortfolio, sold: soldList };
     db.prepare('UPDATE daily_reports SET data = ? WHERE id = ?').run(JSON.stringify(newData), id);
-    res.json({ success: true });
-  } catch (error) { res.status(500).json({ error: 'Update Failed' }); }
+    console.log(`[Auto-Decision] Done. Portfolio size: ${nextPortfolio.length}`);
+
+    res.json({ success: true, finalists: nextPortfolio });
+  } catch (error) {
+    console.error("[Auto-Decision] Failed:", error);
+    res.status(500).json({ error: 'Update Failed' });
+  }
 });
 
 // Backup: Download DB
