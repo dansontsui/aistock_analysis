@@ -60,27 +60,25 @@ const DEFAULT_PROMPTS: Record<string, string> = {
 【市場概況】：
 {{NEWS_SUMMARY}}
 
-【目前持倉 (Current Portfolio)】：
-(請檢視 TA_ACTION，若為 SELL 必須賣出)
+【目前持倉 (Locked Holdings)】：
+(這些股票技術面尚可，**必須保留**，不可賣出)
 {{CURRENT_PORTFOLIO}}
 
-【強勢候選名單 (Candidates)】：
-(這些股票已通過程式篩選：成交量>1000張 且 股價站上月線)
+【今日觀察名單 (Candidates)】：
+(請從中挑選最強勢的股票填補剩餘空位。**特別注意 tech_note 欄位中的 RSI 數值**)
+**選股標準：優先選擇 RSI > 55 的強勢動能股。避免 RSI < 45 的弱勢股。**
 {{CANDIDATES}}
 
 【決策任務】：
-1. **賣出決策**：
-   - 嚴格執行目前持倉的 TA_ACTION (SELL)。
-   - 若基本面題材消失，也可賣出。
-2. **買入決策**：
-   - 從「強勢候選名單」中挑選與「今日題材」共振最強的股票。
-   - 若候選名單為空，或無好標的，可空手。
-3. **總持股限制**：最多 5 檔。
+1. **核心原則**：你目前已持有部分股票 (Locked)。請檢視剩餘空位。
+2. 從「觀察名單」中挑選最佳標的填滿空位。
+3. 若「觀察名單」都不好，可以空手 (不必硬湊 5 檔)。
+4. **禁止賣出「目前持倉」的股票**。
 
 【輸出格式】(JSON Array of Final Portfolio):
 [
    { "code": "2330", "name": "台積電", "entryPrice": 500, "reason": "【續抱】...", "industry": "半導體", "status": "HOLD" },
-   { "code": "2603", "name": "長榮", "entryPrice": 0, "reason": "【新納入】紅海危機受惠，且量價齊揚...", "industry": "航運", "status": "BUY" }
+   { "code": "2603", "name": "長榮", "entryPrice": 0, "reason": "【新納入】...", "industry": "航運", "status": "BUY" }
 ]`
 };
 

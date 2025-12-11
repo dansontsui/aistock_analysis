@@ -429,7 +429,8 @@ app.post('/api/analyze/finalists', async (req, res) => {
     })))}
 
         【今日觀察名單 (Candidates)】：
-        (請從中挑選最強勢的股票填補剩餘空位)
+        (請從中挑選最強勢的股票填補剩餘空位。**特別注意 tech_note 欄位中的 RSI 數值**)
+        **選股標準：優先選擇 RSI > 55 的強勢動能股。避免 RSI < 45 的弱勢股。**
         ${JSON.stringify(candidates)}
 
         【決策任務】：
@@ -1027,7 +1028,8 @@ const runDailyAnalysis = async () => {
     })))}
 
         【強勢候選名單 (Candidates)】：
-        (這些股票已通過程式篩選：成交量>1000張 且 股價站上月線)
+        (這些股票已通過程式篩選：成交量>1000張 且 股價站上月線。**請務必檢查 tech_note 中的 RSI 數值**)
+        **選股標準：優先選擇 RSI > 55 的強勢動能股。避免 RSI < 45 的弱勢股。**
         ${JSON.stringify(robustStocks)}
 
         【決策任務】：
@@ -1143,7 +1145,7 @@ const runDailyAnalysis = async () => {
     // 2. Process Candidates (for UI: "今日觀察名單")
     const candidates = robustStocks.map(s => ({
       code: s.code,
-      name: "", // UI can display Code if Name missing
+      name: s.name || "", // Use name from Tech Filter
       price: priceMap.get(s.code) || s.price,
       reason: s.tech_note,
       industry: "System Filtered"
@@ -1171,7 +1173,7 @@ const runDailyAnalysis = async () => {
       subscriberEmails = db.prepare('SELECT email FROM subscribers').all().map(r => r.email);
     } catch (e) { }
 
-    const reportData = { date: today, newsSummary, finalists, sold: soldStocks };
+    const reportData = { date: today, newsSummary, finalists, sold: soldStocks, candidates }; // Added candidates
     await sendDailyReportEmail(reportData, subscriberEmails);
 
     return { success: true, id: info.lastInsertRowid };

@@ -176,7 +176,7 @@ export async function getStockPrice(code) {
         try {
             const quote = await yahooFinance.quote(symbol);
             if (quote && quote.regularMarketPrice) {
-                return quote.regularMarketPrice;
+                return Number(quote.regularMarketPrice.toFixed(2));
             }
         } catch (e) {
             // Ignore error and try next suffix, unless it's a network error maybe?
@@ -256,13 +256,17 @@ export async function filterCandidates(candidates) {
 
             if (close < ma20) continue;
 
+            // 2.5 Calculate RSI for Filter Context (so AI knows momentum)
+            const rsiVal = RSI.calculate({ values: closes, period: 14 });
+            const currentRSI = rsiVal.length > 0 ? rsiVal[rsiVal.length - 1] : 50;
+
             validStocks.push({
                 ...item, // Keep existing metadata (theme, reason)
                 code: code,
                 name: stockName,
-                price: close,
+                price: Number(close.toFixed(2)),
                 volume: Math.round(volume / 1000),
-                tech_note: `Price(${close}) > MA20(${ma20.toFixed(2)})`
+                tech_note: `Price(${close.toFixed(2)}) > MA20(${ma20.toFixed(2)}) | RSI=${currentRSI.toFixed(1)}`
             });
 
         } catch (error) {

@@ -139,6 +139,32 @@ export const sendDailyReportEmail = async (report, subscribers = []) => {
 
       ${soldHtml}
 
+      <!-- New Section: Candidates -->
+       <div style="margin-top: 30px; background-color: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); border: 1px solid #e5e7eb;">
+        <h2 style="font-size: 1.25rem; font-weight: bold; margin-bottom: 15px; border-left: 4px solid #f59e0b; padding-left: 10px;">⚡ AI 今日觀察名單 (Candidates)</h2>
+        <p style="color: #6b7280; font-size: 0.9rem;">AI 根據市場題材篩選出的強勢股，列入觀察但不一定買進：</p>
+        <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
+          <thead>
+            <tr style="background-color: #f3f4f6; text-align: left;">
+              <th style="padding: 12px; border: 1px solid #e5e7eb;">代號</th>
+              <th style="padding: 12px; border: 1px solid #e5e7eb;">名稱</th>
+              <th style="padding: 12px; border: 1px solid #e5e7eb;">現價</th>
+              <th style="padding: 12px; border: 1px solid #e5e7eb;">技術指標</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${(report.candidates || []).map(c => `
+              <tr>
+                <td style="padding: 12px; border: 1px solid #e5e7eb; font-weight: bold;">${c.code}</td>
+                <td style="padding: 12px; border: 1px solid #e5e7eb;">${c.name}</td>
+                <td style="padding: 12px; border: 1px solid #e5e7eb;">${c.price}</td>
+                <td style="padding: 12px; border: 1px solid #e5e7eb; font-size: 0.9em; color: #4b5563;">${c.reason}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+
 
       <div style="margin-top: 40px; text-align: center; color: #9ca3af; font-size: 0.8rem;">
         <p>此信件由 Google Cloud Run 自動發送</p>
