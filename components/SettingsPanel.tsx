@@ -9,14 +9,48 @@ const PROVIDER_MODELS: Record<string, string[]> = {
 };
 
 const DEFAULT_STEPS = [
-    { key: 'global_news', label: '主要步驟 1：全球財經新聞分析' },
-    { key: 'stock_recommendation', label: '主要步驟 2：台股選股與持倉調整' }
+    { key: 'layer1_news', label: 'Layer 1: News Hunter (全球情報搜查)' },
+    { key: 'layer2_mapping', label: 'Layer 2: Industry Mapper (產業映射與聯想)' },
+    { key: 'layer3_decision', label: 'Layer 3: Portfolio Manager (最終決策與選股)' }
 ];
+
+// --- Default Prompts (Extracted from Server Logic) ---
+const DEFAULT_PROMPTS: Record<string, string> = {
+    layer1_news: `你是一位負責監控全球金融市場的「首席情報官」。請使用「繁體中文」回答。
+任務：廣泛搜尋今日 (\${today}) 的「全球」與「台灣」財經新聞，找出市場的「資金流向」與「熱門題材」。
+重點關注：
+1. 國際金融：美股強勢板塊 (AI, 半導體, 傳產)、Fed 態度、美債殖利率。
+2. 大宗商品：原油、黃金、銅價、航運指數 (SCFI/BDI)。
+3. 台灣熱點：本土政策 (重電/房市)、法說會利多、營收公佈。
+限制：
+- 禁止直接選股，只提取「題材關鍵字」。
+- 廣度優先，涵蓋傳產、金融、原物料。
+輸出格式 (JSON): { "newsSummary": "...", "themes": [{ "keyword": "...", "impact": "High", "summary": "..." }] }`,
+
+    layer2_mapping: `你是一位熟知「台灣產業供應鏈」的資深研究員。
+今日市場熱門題材： \${JSON.stringify(themes)}
+任務：針對每個題材關鍵字，列出對應的「台灣概念股」。
+1. 直接聯想：如「運價漲」-> 貨櫃三雄。
+2. 二階聯想：如「銅價漲」-> 電線電纜/PCB。
+3. 數量：每個題材至少列出 3-5 檔相關個股。
+輸出格式 (JSON String Array): ["2603", "2609", ...]`,
+
+    layer3_decision: `你是一位風格激進、追求「短線爆發力」的避險基金經理人。請使用「繁體中文」回答。
+【市場概況】：\${newsSummary}
+【目前持倉】：\${JSON.stringify(portfolioWithTA)}
+【強勢候選】：\${JSON.stringify(robustStocks)}
+【決策任務】：
+1. **賣出決策**：嚴格執行 TA_ACTION (SELL)。
+2. **買入決策**：從強勢股挑選與題材共振最強者。
+3. **總持股限制**：最多 5 檔。
+輸出格式 (JSON Array): [ { "code": "2330", "status": "HOLD", "reason": "..." } ]`
+};
 
 const SettingsPanel: React.FC = () => {
     const [configs, setConfigs] = useState<SystemConfig[]>([]);
     const [loading, setLoading] = useState(false);
     const [editingKey, setEditingKey] = useState<string | null>(null);
+    const [showDefaultPrompt, setShowDefaultPrompt] = useState(false);
 
     // Form State
     const [formData, setFormData] = useState<SystemConfig | null>(null);
@@ -46,6 +80,7 @@ const SettingsPanel: React.FC = () => {
         };
         setFormData(existing || defaultConfig);
         setEditingKey(stepKey);
+        setShowDefaultPrompt(false);
     };
 
     const handleSave = async () => {
@@ -148,15 +183,35 @@ const SettingsPanel: React.FC = () => {
                                 </div>
 
                                 <div className="mb-4">
-                                    <label className="block text-xs font-bold text-slate-500 mb-1">
-                                        Prompt Template (提示詞模板 - 留空則使用系統預設)
-                                    </label>
-                                    <textarea
-                                        value={formData.prompt_template || ''}
-                                        onChange={e => setFormData({ ...formData, prompt_template: e.target.value })}
-                                        className="w-full h-32 p-3 border border-slate-300 rounded-lg text-sm font-mono text-slate-600 leading-relaxed"
-                                        placeholder="在此輸入自定義 Prompt..."
-                                    />
+                                    <div className="flex justify-between items-center mb-1">
+                                        <label className="block text-xs font-bold text-slate-500">
+                                            Prompt Template (提示詞模板)
+                                        </label>
+                                        {DEFAULT_PROMPTS[step.key] && (
+                                            <button
+                                                onClick={() => setShowDefaultPrompt(!showDefaultPrompt)}
+                                                className="text-xs text-blue-600 hover:text-blue-800 underline"
+                                            >
+                                                {showDefaultPrompt ? '隱藏系統預設 Prompt' : '查看系統預設 Prompt'}
+                                            </button>
+                                        )}
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <textarea
+                                            value={formData.prompt_template || ''}
+                                            onChange={e => setFormData({ ...formData, prompt_template: e.target.value })}
+                                            className="w-full h-48 p-3 border border-slate-300 rounded-lg text-sm font-mono text-slate-600 leading-relaxed"
+                                            placeholder="在此輸入自定義 Prompt (若留空，系統將使用預設邏輯)..."
+                                        />
+                                        {showDefaultPrompt && DEFAULT_PROMPTS[step.key] && (
+                                            <div className="h-48 p-3 bg-slate-100 border border-slate-200 rounded-lg overflow-y-auto">
+                                                <div className="text-xs font-bold text-slate-400 mb-2 sticky top-0 bg-slate-100 pb-2 border-b">系統預設參考 (Read Only):</div>
+                                                <pre className="text-xs text-slate-500 font-mono whitespace-pre-wrap">
+                                                    {DEFAULT_PROMPTS[step.key]}
+                                                </pre>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
 
                                 <div className="flex justify-end gap-2">

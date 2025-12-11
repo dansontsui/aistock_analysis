@@ -9,7 +9,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from "@google/genai";
 import { sendDailyReportEmail } from './services/emailService.js';
-import { analyzeStockTechnicals, getStockPrice } from './services/financeService.js';
+import { analyzeStockTechnicals, getStockPrice, filterCandidates } from './services/financeService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -91,7 +91,10 @@ db.exec(`
 
   INSERT OR IGNORE INTO system_configs (step_key, provider, model_name) VALUES 
   ('global_news', 'gemini', 'gemini-2.5-flash'),
-  ('stock_recommendation', 'qwen', 'qwen-turbo');
+  ('stock_recommendation', 'qwen', 'qwen-turbo'),
+  ('layer1_news', 'gemini', 'gemini-2.5-flash'),
+  ('layer2_mapping', 'gemini', 'gemini-1.5-flash'),
+  ('layer3_decision', 'gemini', 'gemini-1.5-pro');
 
 `);
 
@@ -587,42 +590,92 @@ const runDailyAnalysis = async () => {
   const timestamp = Date.now();
 
   try {
-    // 1. Get News & Candidates
-    console.log("[Automation] Step 1: Getting News & Candidates...");
+    // ------------------------------------------------------------------
+    // Layer 1: Global News Hunter (AI)
+    // Goal: Find keywords/themes (e.g., "Shipping", "Copper")
+    // ------------------------------------------------------------------
+    console.log("[Automation] Layer 1: News Hunter (Searching Themes)...");
 
-    // (Reusing prompt from /api/analyze/candidates)
-    const candPrompt = `
-        你是一位台灣股市的專業分析師。請使用「繁體中文」回答。
-        任務：廣泛搜尋今日 (${today}) 的「全球」與「台灣」財經新聞。
+    const l1Prompt = `
+        你是一位負責監控全球金融市場的「首席情報官」。請使用「繁體中文」回答。
+        任務：廣泛搜尋今日 (${today}) 的「全球」與「台灣」財經新聞，找出市場的「資金流向」與「熱門題材」。
+        
         重點關注：
-        1. 美股重要指數與權值股表現 (Nasdaq, 費半 SOX, NVIDIA, Apple, AMD, 台積電 ADR)。
-        2. 總體經濟指標 (Fed 利率決策, CPI, 美債殖利率)。
-        3. 台灣本地熱門題材 (法說會, 營收公布, 產業動態)。
-        綜合上述國際與國內資訊，選出 10 檔最值得關注的台灣股票。
-        輸出格式：僅限 JSON。
+        1. 國際金融：美股強勢板塊 (AI, 半導體, 傳產)、Fed 態度、美債殖利率。
+        2. 大宗商品：原油、黃金、銅價、航運指數 (SCFI/BDI)。
+        3. 台灣熱點：本土政策 (重電/房市)、法說會利多、營收公佈。
+
+        限制：
+        - 禁止直接選股，只提取「題材關鍵字」。
+        - 廣度優先，涵蓋傳產、金融、原物料。
+
+        輸出格式 (JSON):
         {
-          "newsSummary": "新聞摘要...",
-          "candidates": [ { "code": "2330", "name": "台積電", "price": 1000, "reason": "...", "industry": "..." } ]
+          "newsSummary": "今日市場重點整理 (請條列式，每點換行，使用 • 符號)...",
+          "themes": [
+            { "keyword": "航運", "impact": "High", "summary": "紅海危機升級，運價看漲。" },
+            { "keyword": "AI伺服器", "impact": "High", "summary": "NVIDIA財報優於預期。" }
+          ]
         }
     `;
-    // Use 'global_news' config (Default: Gemini 2.5)
-    const candResponse = await callAI('global_news', candPrompt, { tools: [{ googleSearch: {} }] });
-    const candText = candResponse.text || "{}";
-    const candData = JSON.parse(extractJson(candText));
-    const newsSummary = candData.newsSummary || "No summary";
-    const candidates = candData.candidates || [];
 
-    // Extract Sources 
-    // (Note: callAI returns simplified structure. For full grounding metadata in Gemini, we'd need to adjust callGemini return.
-    // For now, minimizing changes, sources might be empty if not handled. If user needs sources, we can enhance callGemini later.)
-    const sources = [];
-    // if (candResponse.candidates?.[0]?.groundingMetadata?.groundingChunks) ... (See previous note)
+    // Use 'layer1_news' config (Default: Gemini 2.5 Flash)
+    const l1Response = await callAI('layer1_news', l1Prompt, { tools: [{ googleSearch: {} }] });
+    const l1Data = JSON.parse(extractJson(l1Response.text || "{}"));
+    const newsSummary = l1Data.newsSummary || "無新聞摘要";
+    const themes = l1Data.themes || [];
+    console.log(`[Layer 1] Found ${themes.length} themes:`, themes.map(t => t.keyword).join(', '));
 
 
-    // 2. Portfolio Rebalancing (Finalists)
-    console.log("[Automation] Step 2: Rebalancing Portfolio...");
+    // ------------------------------------------------------------------
+    // Layer 2: Industry Mapper (AI)
+    // Goal: Map themes to specific stock codes (Long List)
+    // ------------------------------------------------------------------
+    console.log("[Automation] Layer 2: Industry Mapper (Mapping Stocks)...");
 
-    // Fetch previous portfolio
+    const l2Prompt = `
+        你是一位熟知「台灣產業供應鏈」的資深研究員。
+        
+        今日市場熱門題材：
+        ${JSON.stringify(themes)}
+
+        任務：針對每個題材關鍵字，列出對應的「台灣概念股」。
+        1. 直接聯想：如「運價漲」-> 貨櫃三雄。
+        2. 二階聯想：如「銅價漲」-> 電線電纜/PCB。
+        3. 數量：每個題材至少列出 3-5 檔相關個股。
+
+        輸出格式 (JSON String Array):
+        ["2603", "2609", "2615", "1605", "2330", ...] 
+        (請直接輸出純字串陣列，包含所有想到的股票代號)
+    `;
+
+    // Use 'layer2_mapping' config (Default: Qwen Turbo/Max for reasoning)
+    const l2Response = await callAI('layer2_mapping', l2Prompt);
+    const rawStockCodes = JSON.parse(extractJson(l2Response.text || "[]"));
+    console.log(`[Layer 2] Mapped ${rawStockCodes.length} raw candidates.`);
+
+
+    // ------------------------------------------------------------------
+    // Layer 2.5: The Tech Filter (Code)
+    // Goal: Filter out low volume or weak trend stocks
+    // ------------------------------------------------------------------
+    console.log("[Automation] Layer 2.5: Tech Filter (Cleaning Data)...");
+
+    // This function checks Volume > 1000 and Price > MA20
+    const robustStocks = await filterCandidates(rawStockCodes);
+    console.log(`[Layer 2.5] ${robustStocks.length} stocks passed the filter.`);
+
+    // If too few stocks, maybe add some default indices or heavy weights? 
+    // For now, let's respect the filter. If 0, AI will have nothing to pick.
+
+
+    // ------------------------------------------------------------------
+    // Layer 3: Portfolio Manager (Final Decision) (AI)
+    // Goal: Pick Top 5 from the robust list based on news & tech status
+    // ------------------------------------------------------------------
+    console.log("[Automation] Layer 3: Portfolio Manager (Final Decision)...");
+
+    // Fetch previous portfolio for rebalancing context
     let currentPortfolio = [];
     try {
       const latestReport = db.prepare('SELECT data FROM daily_reports ORDER BY timestamp DESC LIMIT 1').get();
@@ -632,147 +685,142 @@ const runDailyAnalysis = async () => {
       }
     } catch (e) { console.warn("[DB] No previous portfolio found."); }
 
-    // --- 2. Technical Analysis Integration ---
-    console.log("[Automation] Step 2.5: Running Technical Analysis...");
-
-    // Analyze Current Portfolio
+    // Re-verify current portfolio status (Technical Check)
+    // We want to sell if they violate hard rules (Sell Signal)
     const portfolioWithTA = await Promise.all(currentPortfolio.map(async (stock) => {
       const ta = await analyzeStockTechnicals(stock.code);
       return { ...stock, ta };
     }));
 
-    // Analyze Candidates (optional, for filtering)
-    // Analyze Candidates (optional, for filtering)
-    const candidatesWithTA = (await Promise.all(candidates.map(async (stock) => {
-      const ta = await analyzeStockTechnicals(stock.code);
-      return { ...stock, ta };
-    }))).filter(c => !c.ta.error && c.ta.status !== 'UNKNOWN');
-
-    const finPrompt = `
-        你是一位專業的基金經理人，負責管理一個「最多持股 5 檔」的台股投資組合。
+    const l3Prompt = `
+        你是一位風格激進、追求「短線爆發力」的避險基金經理人。
         請使用「繁體中文」回答。
 
-        市場概況：${newsSummary}
-
+        【市場概況】：${newsSummary}
+        
         【目前持倉 (Current Portfolio)】：
-        (包含技術分析訊號，請優先遵守 TA ACTION 指令)
+        (請檢視 TA_ACTION，若為 SELL 必須賣出)
         ${JSON.stringify(portfolioWithTA.map(p => ({
       code: p.code,
       name: p.name,
       entryPrice: p.entryPrice,
-      currentMA_Status: p.ta.technicalReason,
-      TA_ACTION: p.ta.action, // SELL, HOLD
-      TA_SIGNALS: p.ta.signals // TREND_REVERSAL, HIGH_BIAS_REVERSAL, etc.
+      ROI: p.roi ? p.roi.toFixed(1) + '%' : '0%',
+      TA_ACTION: p.ta.action,
+      TA_REASON: p.ta.technicalReason
     })))}
 
-        【今日觀察名單 (New Candidates)】：
-        ${JSON.stringify(candidatesWithTA.map(c => ({
-      code: c.code,
-      name: c.name,
-      technical_view: c.ta.technicalReason,
-      is_strong_trend: c.ta.signals.includes('STRONG_UPTREND')
-    })))}
+        【強勢候選名單 (Candidates)】：
+        (這些股票已通過程式篩選：成交量>1000張 且 股價站上月線)
+        ${JSON.stringify(robustStocks)}
 
         【決策任務】：
-        1. **優先執行技術分析指令 (Hard Rules)**：
-           - **賣出規則 (雙軌制)**：
-             - 若 TA_ACTION 為 "SELL"，**必須立刻賣出**。
-           - **買入規則**：
-             - 優先選擇強勢股 (股價 > 月線 > 季線)。
-             - **禁止買入** 空頭排列 (股價 < 季線) 的股票。
+        1. **賣出決策**：
+           - 嚴格執行目前持倉的 TA_ACTION (SELL)。
+           - 若基本面題材消失，也可賣出。
+        2. **買入決策**：
+           - 從「強勢候選名單」中挑選與「今日題材」共振最強的股票。
+           - 若候選名單為空，或無好標的，可空手。
+        3. **總持股限制**：最多 5 檔。
 
-        2. **撰寫完整理由 (reason)**：
-           - **必須包含「進場/決策當下的技術面狀況」** (例如：目前股價 1480 站穩月線，均線多頭排列)。
-           - 請勿簡略，請完整說明看好的產業趨勢以及技術面支撐點位。
-
-        3. 決定是否要「賣出」或「買入」新標的 (嚴格限制總持股 5 檔)。
-
-        【輸出格式】：僅限 JSON 陣列 (最終的持股名單)。
+        【輸出格式】(JSON Array of Final Portfolio):
         [
-           { "code": "2330", "name": "台積電", "entryPrice": 500, "reason": "【續抱】技術面強勢：股價(1480)站穩月線之上，且MA5穿越MA10形成黃金交叉。基本面：受惠AI先進封裝產能供不應求...", "industry": "半導體", "status": "HOLD" },
-           { "code": "2454", "name": "聯發科", "entryPrice": 0, "reason": "【新納入】技術面翻多：股價突破季線反壓，RSI轉強。天璣9400晶片出貨暢旺...", "industry": "IC設計", "status": "BUY" }
+           { "code": "2330", "name": "台積電", "entryPrice": 500, "reason": "【續抱】...", "industry": "半導體", "status": "HOLD" },
+           { "code": "2603", "name": "長榮", "entryPrice": 0, "reason": "【新納入】紅海危機受惠，且量價齊揚...", "industry": "航運", "status": "BUY" }
         ]
     `;
-    // Use 'stock_recommendation' config (Default: Qwen)
-    const finResponse = await callAI('stock_recommendation', finPrompt);
-    const newPortfolioRaw = JSON.parse(extractJson(finResponse.text || "[]"));
+
+    // Use 'layer3_decision' config (Default: Gemini 1.5 Pro)
+    const l3Response = await callAI('layer3_decision', l3Prompt);
+    const newPortfolioRaw = JSON.parse(extractJson(l3Response.text || "[]"));
 
 
-    // 3. Price Verification
-    console.log("[Automation] Step 3: Verifying Prices...");
-    // Use Yahoo Finance to fetch prices
+    // ------------------------------------------------------------------
+    // Finalization: Price Check & Save
+    // ------------------------------------------------------------------
+    console.log("[Automation] Finalizing Report...");
+
+    // Helper to fetch prices including candidates (for UI display)
+    // Candidates in UI now comes from 'robustStocks' (Layer 2.5 winners)
+    // Let's attach names to robustStocks if possible? 
+    // Since robustStocks items (from filterCandidates) might not have Names yet (filterCandidates didn't return names).
+    // We can fetch names from final portfolio or just leave as code for now.
+    // Ideally we want names. 'yahoo-finance' historical doesn't give name. 
+    // We can use 'quote' in filterCandidates or just live with codes in the "Candidates" section of the report.
+    // Or we can try to guess names from Layer 2 (AI output raw codes).
+    // Let's just store Code/Price/Note in candidates.
+
+    // Get real-time prices for Finalists to calculate ROI correctly
+    const finalCodes = newPortfolioRaw.map(i => i.code);
+    const candidateCodes = robustStocks.map(i => i.code);
+    const allCodes = [...new Set([...finalCodes, ...candidateCodes])];
+
     const priceMap = new Map();
-    await Promise.all(newPortfolioRaw.map(async (item) => {
-      const price = await getStockPrice(item.code);
-      if (price > 0) priceMap.set(String(item.code), price);
+    await Promise.all(allCodes.map(async (code) => {
+      const p = await getStockPrice(code);
+      if (p > 0) priceMap.set(String(code), p);
     }));
 
+    // 1. Process Finalists
     const finalists = newPortfolioRaw.map(item => {
-      const itemCode = String(item.code).trim();
-      const verifiedPrice = priceMap.get(itemCode) || priceMap.get(item.code); // Try both key types
+      const code = String(item.code).trim();
+      const currentPrice = priceMap.get(code) || item.currentPrice || 0;
 
-      let currentPriceVal = parseFloat((verifiedPrice && verifiedPrice > 0) ? verifiedPrice : (item.currentPrice || 0)) || 0;
       let entryPrice = parseFloat(item.entryPrice) || 0;
       let entryDate = item.entryDate || getTodayString();
+      const isNew = !currentPortfolio.find(p => String(p.code).trim() === code);
 
-      const isNew = !currentPortfolio.find(p => String(p.code).trim() === itemCode);
-
-      if (isNew || !entryPrice || entryPrice === 0) {
-        entryPrice = currentPriceVal;
+      if (isNew || !entryPrice) {
+        entryPrice = currentPrice;
         entryDate = getTodayString();
       }
-      const roi = entryPrice ? ((currentPriceVal - entryPrice) / entryPrice) * 100 : 0;
+
+      const roi = entryPrice ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
 
       return {
-        code: itemCode,
-        name: String(item.name),
-        industry: String(item.industry),
-        reason: String(item.reason),
+        ...item,
+        code,
+        currentPrice,
         entryPrice,
         entryDate,
-        currentPrice: currentPriceVal,
         roi,
         status: isNew ? 'NEW' : 'HOLD'
       };
     });
 
-    // Calculate Sold Stocks
+    // 2. Process Candidates (for UI: "今日觀察名單")
+    const candidates = robustStocks.map(s => ({
+      code: s.code,
+      name: "", // UI can display Code if Name missing
+      price: priceMap.get(s.code) || s.price,
+      reason: s.tech_note,
+      industry: "System Filtered"
+    }));
+
+    // 3. Process Sold
     const soldStocks = currentPortfolio
       .filter(curr => !finalists.find(r => r.code === curr.code))
       .map(s => {
         const exitPrice = priceMap.get(s.code) || s.currentPrice;
         const roi = s.entryPrice ? ((exitPrice - s.entryPrice) / s.entryPrice) * 100 : 0;
-
-        // Find reason from Technical Analysis
-        const taInfo = portfolioWithTA.find(p => p.code === s.code);
-        let sellReason = "AI 綜合判斷賣出"; // Default
-        if (taInfo && taInfo.ta && taInfo.ta.action === 'SELL') {
-          sellReason = `【觸發硬規則】${taInfo.ta.technicalReason}`;
-        }
-
-        return { ...s, exitPrice, roi, reason: sellReason };
+        return { ...s, exitPrice, roi, reason: "AI 換股操作 / 觸發停損利" };
       });
 
-    // 4. Save to DB
-    console.log(`[Automation] Step 4: Saving Report... (Sold: ${soldStocks.length})`);
-    const jsonData = JSON.stringify({ candidates, finalists, sources, sold: soldStocks });
-    const info = db.prepare('INSERT INTO daily_reports (date, timestamp, newsSummary, data) VALUES (?, ?, ?, ?)').run(today, timestamp, newsSummary, jsonData);
-    console.log(`[Automation] Saved Report ID: ${info.lastInsertRowid}`);
 
-    // 5. Send Email
-    console.log("[Automation] Step 5: Sending Email...");
-    // Fetch Subscribers from DB
+    // Save DB
+    console.log(`[Automation] Saving Report (Finalists: ${finalists.length}, Candidates: ${candidates.length})...`);
+    const jsonData = JSON.stringify({ candidates, finalists, sources: [], sold: soldStocks, themes }); // Saved themes too
+    const info = db.prepare('INSERT INTO daily_reports (date, timestamp, newsSummary, data) VALUES (?, ?, ?, ?)').run(today, timestamp, newsSummary, jsonData);
+
+    // Send Email
+    console.log("[Automation] Sending Email...");
     let subscriberEmails = [];
     try {
-      const rows = db.prepare('SELECT email FROM subscribers').all();
-      subscriberEmails = rows.map(row => row.email);
-    } catch (e) { console.warn("[DB] Failed to fetch subscribers for email", e); }
+      subscriberEmails = db.prepare('SELECT email FROM subscribers').all().map(r => r.email);
+    } catch (e) { }
 
     const reportData = { date: today, newsSummary, finalists, sold: soldStocks };
-    // Pass subscribers to email service (service will mix with env if needed)
     await sendDailyReportEmail(reportData, subscriberEmails);
 
-    console.log("[Automation] Job Completed Successfully.");
     return { success: true, id: info.lastInsertRowid };
 
   } catch (error) {
@@ -780,6 +828,18 @@ const runDailyAnalysis = async () => {
     return { success: false, error: error.message };
   }
 };
+
+// CRON Trigger Route
+app.post('/api/cron/trigger', async (req, res) => {
+  // Check secret if needed (Simple protection)
+  // const auth = req.headers['authorization'];
+  // if (auth !== `Bearer ${process.env.CRON_SECRET}`) return res.status(401).json({ error: 'Unauthorized' });
+
+  // Run async (don't wait if timeout is a concern, but Cloud Scheduler needs 200 OK)
+  // For Cloud Run Gen2, we can wait up to 60mins.
+  const result = await runDailyAnalysis();
+  res.json(result);
+});
 
 // 9. Update Price for Report Item
 app.post('/api/reports/:id/entry-price', async (req, res) => {

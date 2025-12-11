@@ -154,9 +154,17 @@ const App: React.FC = () => {
             <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-bold text-lg">
               TW
             </div>
-            <h1 className="text-xl font-bold tracking-tight text-slate-800">台股 AI 分析師 (SQLite版)</h1>
+            <div className="flex flex-col">
+              <h1 className="text-xl font-bold tracking-tight text-slate-800 leading-none">
+                台股 AI 分析師
+              </h1>
+              <span className="text-xs text-slate-500 font-mono mt-0.5">
+                v2.2 <span className="text-indigo-600 font-bold bg-indigo-50 px-1 rounded">Latest: 強制排版換行修正</span>
+              </span>
+            </div>
           </div>
           <div className="flex gap-2 items-center">
+            {/* Version History Tooltip / Popover could go here, for now simpler is better */}
             {/* Backup Download Button */}
             <button
               onClick={downloadDb}
@@ -261,7 +269,12 @@ const App: React.FC = () => {
                         <svg className="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" /></svg>
                         市場脈動
                       </h3>
-                      <p className="text-slate-600 leading-relaxed mb-4">{newsSummary}</p>
+                      <div className="text-slate-600 leading-relaxed mb-4 whitespace-pre-line text-[15px]">
+                        {/* Auto-format: Add line breaks after periods if it's a long block of text */}
+                        {newsSummary.includes('•')
+                          ? newsSummary
+                          : newsSummary.replace(/。/g, '。\n\n')}
+                      </div>
 
                       {/* Sources Display */}
                       {sources.length > 0 && (
