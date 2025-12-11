@@ -824,7 +824,8 @@ app.put('/api/reports/:id/prices', async (req, res) => {
       }
     }
 
-    // 2. Buy Check (Fill slots)
+    // 2. Buy Check (Fill slots) - DISABLE per user request (Wait for next AI decision)
+    /*
     if (nextPortfolio.length < 5) {
       console.log(`[Auto-Decision] Portfolio has space (${nextPortfolio.length}/5). Checking candidates...`);
       for (const candidate of candidates) {
@@ -850,6 +851,7 @@ app.put('/api/reports/:id/prices', async (req, res) => {
         } catch (e) { console.error(`[Auto-Decision] Error checking candidate ${candidate.code}`, e); }
       }
     }
+    */
 
     const newData = { ...currentData, finalists: nextPortfolio, sold: soldList };
     db.prepare('UPDATE daily_reports SET data = ? WHERE id = ?').run(JSON.stringify(newData), id);
