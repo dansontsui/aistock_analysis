@@ -4,7 +4,7 @@ import { getSettings, saveSetting, SystemConfig } from '../services/settingsServ
 const AVAILABLE_PROVIDERS = ['gemini', 'qwen'];
 
 const PROVIDER_MODELS: Record<string, string[]> = {
-    gemini: ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'],
+    gemini: ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-1.5-flash'],
     qwen: ['qwen-turbo', 'qwen-plus', 'qwen-max', 'qwen-long']
 };
 
@@ -14,36 +14,74 @@ const DEFAULT_STEPS = [
     { key: 'layer3_decision', label: 'Layer 3: Portfolio Manager (最終決策與選股)' }
 ];
 
-// --- Default Prompts (Extracted from Server Logic) ---
+// --- Default Prompts (Variables: {{TODAY}}, {{THEMES}}, {{NEWS_SUMMARY}}, {{CURRENT_PORTFOLIO}}, {{CANDIDATES}}) ---
 const DEFAULT_PROMPTS: Record<string, string> = {
     layer1_news: `你是一位負責監控全球金融市場的「首席情報官」。請使用「繁體中文」回答。
-任務：廣泛搜尋今日 (\${today}) 的「全球」與「台灣」財經新聞，找出市場的「資金流向」與「熱門題材」。
+任務：廣泛搜尋今日 ({{TODAY}}) 的「全球」與「台灣」財經新聞，找出市場的「資金流向」與「熱門題材」。
+
 重點關注：
 1. 國際金融：美股強勢板塊 (AI, 半導體, 傳產)、Fed 態度、美債殖利率。
 2. 大宗商品：原油、黃金、銅價、航運指數 (SCFI/BDI)。
 3. 台灣熱點：本土政策 (重電/房市)、法說會利多、營收公佈。
+
 限制：
 - 禁止直接選股，只提取「題材關鍵字」。
 - 廣度優先，涵蓋傳產、金融、原物料。
-輸出格式 (JSON): { "newsSummary": "...", "themes": [{ "keyword": "...", "impact": "High", "summary": "..." }] }`,
+
+輸出格式 (JSON):
+{
+  "newsSummary": "今日市場重點整理 (請條列式，每點換行，使用 • 符號)...",
+  "themes": [
+    { "keyword": "航運", "impact": "High", "summary": "紅海危機升級，運價看漲。" },
+    { "keyword": "AI伺服器", "impact": "High", "summary": "NVIDIA財報優於預期。" }
+  ]
+}`,
 
     layer2_mapping: `你是一位熟知「台灣產業供應鏈」的資深研究員。
-今日市場熱門題材： \${JSON.stringify(themes)}
+
+今日市場熱門題材：
+{{THEMES}}
+
 任務：針對每個題材關鍵字，列出對應的「台灣概念股」。
 1. 直接聯想：如「運價漲」-> 貨櫃三雄。
 2. 二階聯想：如「銅價漲」-> 電線電纜/PCB。
 3. 數量：每個題材至少列出 3-5 檔相關個股。
-輸出格式 (JSON String Array): ["2603", "2609", ...]`,
 
-    layer3_decision: `你是一位風格激進、追求「短線爆發力」的避險基金經理人。請使用「繁體中文」回答。
-【市場概況】：\${newsSummary}
-【目前持倉】：\${JSON.stringify(portfolioWithTA)}
-【強勢候選】：\${JSON.stringify(robustStocks)}
+輸出格式 (JSON Object Array):
+[
+  { "code": "2330", "name": "台積電", "theme": "AI" },
+  { "code": "2603", "name": "長榮", "theme": "航運" }
+]
+(請務必包含 code 與 name，name 請用繁體中文)`,
+
+    layer3_decision: `你是一位風格激進、追求「短線爆發力」的避險基金經理人。
+請使用「繁體中文」回答。
+
+【市場概況】：
+{{NEWS_SUMMARY}}
+
+【目前持倉 (Current Portfolio)】：
+(請檢視 TA_ACTION，若為 SELL 必須賣出)
+{{CURRENT_PORTFOLIO}}
+
+【強勢候選名單 (Candidates)】：
+(這些股票已通過程式篩選：成交量>1000張 且 股價站上月線)
+{{CANDIDATES}}
+
 【決策任務】：
-1. **賣出決策**：嚴格執行 TA_ACTION (SELL)。
-2. **買入決策**：從強勢股挑選與題材共振最強者。
+1. **賣出決策**：
+   - 嚴格執行目前持倉的 TA_ACTION (SELL)。
+   - 若基本面題材消失，也可賣出。
+2. **買入決策**：
+   - 從「強勢候選名單」中挑選與「今日題材」共振最強的股票。
+   - 若候選名單為空，或無好標的，可空手。
 3. **總持股限制**：最多 5 檔。
-輸出格式 (JSON Array): [ { "code": "2330", "status": "HOLD", "reason": "..." } ]`
+
+【輸出格式】(JSON Array of Final Portfolio):
+[
+   { "code": "2330", "name": "台積電", "entryPrice": 500, "reason": "【續抱】...", "industry": "半導體", "status": "HOLD" },
+   { "code": "2603", "name": "長榮", "entryPrice": 0, "reason": "【新納入】紅海危機受惠，且量價齊揚...", "industry": "航運", "status": "BUY" }
+]`
 };
 
 const SettingsPanel: React.FC = () => {
@@ -194,6 +232,19 @@ const SettingsPanel: React.FC = () => {
                                             >
                                                 {showDefaultPrompt ? '隱藏系統預設 Prompt' : '查看系統預設 Prompt'}
                                             </button>
+                                        )}
+                                    </div>
+                                    {/* Variable Hints */}
+                                    <div className="mb-2 text-xs text-slate-500 bg-slate-50 p-2 rounded border border-slate-200">
+                                        <span className="font-bold">可用變數：</span>
+                                        {step.key === 'layer1_news' && <code className="bg-white border px-1 rounded mx-1">{`{{TODAY}}`}</code>}
+                                        {step.key === 'layer2_mapping' && <code className="bg-white border px-1 rounded mx-1">{`{{THEMES}}`}</code>}
+                                        {step.key === 'layer3_decision' && (
+                                            <>
+                                                <code className="bg-white border px-1 rounded mx-1">{`{{NEWS_SUMMARY}}`}</code>
+                                                <code className="bg-white border px-1 rounded mx-1">{`{{CURRENT_PORTFOLIO}}`}</code>
+                                                <code className="bg-white border px-1 rounded mx-1">{`{{CANDIDATES}}`}</code>
+                                            </>
                                         )}
                                     </div>
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

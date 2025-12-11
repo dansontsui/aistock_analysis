@@ -113,12 +113,28 @@ const callAI = async (stepKey, prompt, fallbackConfig = {}) => {
 
   console.log(`[AI] Step: ${stepKey} | Provider: ${config.provider} | Model: ${config.model_name}`);
 
+  // 1.5 Dynamic Prompt Substitution
+  let finalPrompt = prompt;
+  if (config.prompt_template && config.prompt_template.trim() !== "") {
+    console.log(`[AI] Using Custom Prompt Template for ${stepKey}`);
+    finalPrompt = config.prompt_template;
+
+    // Replace variables (e.g., {{TODAY}}) from fallbackConfig.variables
+    if (fallbackConfig.variables) {
+      for (const [key, value] of Object.entries(fallbackConfig.variables)) {
+        // Replace all occurrences of {{KEY}}
+        const placeholder = `{{${key}}}`;
+        finalPrompt = finalPrompt.split(placeholder).join(String(value));
+      }
+    }
+  }
+
   // 2. Dispatch to Provider
   if (config.provider === 'qwen') {
-    return await callQwen(config.model_name, prompt, config.temperature);
+    return await callQwen(config.model_name, finalPrompt, config.temperature);
   } else {
     // Default to Gemini
-    return await callGemini(config.model_name, prompt, fallbackConfig);
+    return await callGemini(config.model_name, finalPrompt, fallbackConfig);
   }
 };
 
@@ -254,41 +270,94 @@ app.delete('/api/subscribers/:id', (req, res) => {
 
 // AI: Generate Candidates
 app.post('/api/analyze/candidates', async (req, res) => {
-  console.log("[AI] Generating 10 candidates...");
+  console.log("[AI] Generating 10 candidates (Full Pipeline)...");
   try {
 
-    const prompt = `
-        你是一位台灣股市的專業分析師。請使用「繁體中文」回答。
-        任務：廣泛搜尋今日 (${getTodayString()}) 的「全球」與「台灣」財經新聞。
+    // --- Layer 1: News ---
+    console.log("[Step 1] Layer 1: News Hunter...");
+    const today = getTodayString();
+    const l1Prompt = `
+        你是一位負責監控全球金融市場的「首席情報官」。請使用「繁體中文」回答。
+        任務：廣泛搜尋今日 (${today}) 的「全球」與「台灣」財經新聞，找出市場的「資金流向」與「熱門題材」。
+        
         重點關注：
-        1. 美股重要指數與權值股表現 (Nasdaq, 費半 SOX, NVIDIA, Apple, AMD, 台積電 ADR)。
-        2. 總體經濟指標 (Fed 利率決策, CPI, 美債殖利率)。
-        3. 台灣本地熱門題材 (法說會, 營收公布, 產業動態)。
-        綜合上述國際與國內資訊，選出 10 檔最值得關注的台灣股票。
-        輸出格式：僅限 JSON。
+        1. 國際金融：美股強勢板塊 (AI, 半導體, 傳產)、Fed 態度、美債殖利率。
+        2. 大宗商品：原油、黃金、銅價、航運指數 (SCFI/BDI)。
+        3. 台灣熱點：本土政策 (重電/房市)、法說會利多、營收公佈。
+
+        限制：
+        - 禁止直接選股，只提取「題材關鍵字」。
+        - 廣度優先，涵蓋傳產、金融、原物料。
+
+        輸出格式 (JSON):
         {
-          "newsSummary": "新聞摘要...",
-          "candidates": [ { "code": "2330", "name": "台積電", "price": 1000, "reason": "...", "industry": "..." } ]
+          "newsSummary": "今日市場重點整理 (請條列式，每點換行，使用 • 符號)...",
+          "themes": [
+            { "keyword": "航運", "impact": "High", "summary": "紅海危機升級..." },
+            { "keyword": "AI伺服器", "impact": "High", "summary": "NVIDIA財報..." }
+          ]
         }
     `;
+    const l1Response = await callAI('layer1_news', l1Prompt, {
+      tools: [{ googleSearch: {} }],
+      variables: { TODAY: today }
+    });
+    const l1Data = JSON.parse(extractJson(l1Response.text || "{}"));
+    const newsSummary = l1Data.newsSummary || "";
+    const themes = l1Data.themes || [];
+    console.log(`[Layer 1] Found ${themes.length} themes.`);
 
-    // Use configurable AI with 'global_news' step key
-    // Pass Google Search config in case it's Gemini (Qwen currently ignores this via API)
-    const response = await callAI('global_news', prompt, { tools: [{ googleSearch: {} }] });
-    const text = response.text || "{}";
-    const data = JSON.parse(extractJson(text));
+    // --- Layer 2: Mapping ---
+    console.log("[Step 2] Layer 2: Industry Mapper...");
+    const l2Prompt = `
+        你是一位熟知「台灣產業供應鏈」的資深研究員。
+        今日市場熱門題材：
+        ${JSON.stringify(themes)}
 
-    // Extract Sources (Only if provider sent them structure, mostly Gemini specific)
-    // Note: callAI standardizes to text, so we might lose groundingMetadata if we don't return full object.
-    // For now, let's keep it simple. If Qwen is used, sources might need different handling.
-    // But since Step 1 is Gemini default, we lose grounding metadata in current callAI/callGemini implementation.
-    // Fix: Update callGemini to return raw response too if needed? 
-    // Actually, let's just accept sources are empty for now or parse from text if model provides.
-    // Or... we can attach raw response to the return object in callGemini.
+        任務：針對每個題材關鍵字，列出對應的「台灣概念股」。
+        1. 直接聯想機制：如「運價漲」-> 貨櫃三雄。
+        2. 二階聯想機制：如「銅價漲」-> 電線電纜/PCB。
+        3. 每個題材列出 3-5 檔相關個股。
+
+        輸出格式 (JSON Object Array):
+        [
+          { "code": "2330", "name": "台積電", "theme": "AI", "reason": "先進製程強勁" },
+          { "code": "2603", "name": "長榮", "theme": "航運", "reason": "運價上漲受惠" }
+        ]
+        (請務必包含 reason 欄位解釋關聯性)
+    `;
+    const l2Response = await callAI('layer2_mapping', l2Prompt, {
+      variables: { THEMES: JSON.stringify(themes) }
+    });
+    const rawCandidates = JSON.parse(extractJson(l2Response.text || "[]"));
+    console.log(`[Layer 2] Mapped ${rawCandidates.length} potential candidates.`);
+
+    // --- Layer 2.5: Tech Filter ---
+    console.log("[Step 2.5] Layer 2.5: Tech Filter...");
+    // filterCandidates now handles objects and fetching names
+    const robustCandidates = await filterCandidates(rawCandidates);
+    console.log(`[Layer 2.5] ${robustCandidates.length} stocks passed filters.`);
+
+    // Format for Frontend
+    // Frontend expects: { code, name, price, reason, industry (optional) }
+    const finalCandidates = robustCandidates.map(c => ({
+      code: c.code,
+      name: c.name || c.code,
+      price: c.price,
+      reason: c.reason ? `[${c.theme}] ${c.reason}` : `AI Mapped: ${c.theme}`,
+      industry: c.theme || "N/A",
+      tech_note: c.tech_note
+    }));
+
+    // Return Top 10 by default or all robust ones
+    // Usually limit to 10 for UI not to be overwhelmed
+    const limitedCandidates = finalCandidates.slice(0, 10);
+
+    // Sources: we don't really have them structured from this flow unless we extract from L1 tools
+    // We can assume Gemini tool usage if available, but for now empty is okay.
     const sources = [];
-    // (Grounding extraction omitted for simplicity in this refactor, can re-add if critical)
 
-    res.json({ newsSummary: data.newsSummary || "", candidates: data.candidates || [], sources });
+    res.json({ newsSummary, candidates: limitedCandidates, sources });
 
   } catch (error) {
     console.error("[AI Error]", error);
@@ -353,8 +422,14 @@ app.post('/api/analyze/finalists', async (req, res) => {
         ]
     `;
 
-    // Use 'stock_recommendation' step config (Default: Qwen)
-    const response = await callAI('stock_recommendation', prompt);
+    // Use 'layer3_decision' step config (New System)
+    const response = await callAI('layer3_decision', prompt, {
+      variables: {
+        NEWS_SUMMARY: newsSummary,
+        CURRENT_PORTFOLIO: JSON.stringify(currentPortfolio), // Note: manual API might lack TA details here, might need improvement later
+        CANDIDATES: JSON.stringify(candidates)
+      }
+    });
     const text = response.text || "[]";
     const newPortfolioRaw = JSON.parse(extractJson(text));
     if (!Array.isArray(newPortfolioRaw)) throw new Error("AI output not array");
@@ -620,7 +695,10 @@ const runDailyAnalysis = async () => {
     `;
 
     // Use 'layer1_news' config (Default: Gemini 2.5 Flash)
-    const l1Response = await callAI('layer1_news', l1Prompt, { tools: [{ googleSearch: {} }] });
+    const l1Response = await callAI('layer1_news', l1Prompt, {
+      tools: [{ googleSearch: {} }],
+      variables: { TODAY: today }
+    });
     const l1Data = JSON.parse(extractJson(l1Response.text || "{}"));
     const newsSummary = l1Data.newsSummary || "無新聞摘要";
     const themes = l1Data.themes || [];
@@ -644,15 +722,27 @@ const runDailyAnalysis = async () => {
         2. 二階聯想：如「銅價漲」-> 電線電纜/PCB。
         3. 數量：每個題材至少列出 3-5 檔相關個股。
 
-        輸出格式 (JSON String Array):
-        ["2603", "2609", "2615", "1605", "2330", ...] 
-        (請直接輸出純字串陣列，包含所有想到的股票代號)
+        輸出格式 (JSON Object Array):
+        [
+          { "code": "2330", "name": "台積電", "theme": "AI" },
+          { "code": "2603", "name": "長榮", "theme": "航運" }
+        ]
+        (請務必包含 code 與 name，name 請用繁體中文)
     `;
 
     // Use 'layer2_mapping' config (Default: Qwen Turbo/Max for reasoning)
-    const l2Response = await callAI('layer2_mapping', l2Prompt);
-    const rawStockCodes = JSON.parse(extractJson(l2Response.text || "[]"));
-    console.log(`[Layer 2] Mapped ${rawStockCodes.length} raw candidates.`);
+    const l2Response = await callAI('layer2_mapping', l2Prompt, {
+      variables: { THEMES: JSON.stringify(themes) }
+    });
+    // AI might return just codes or objects now. Let's normalize.
+    let rawStockData = JSON.parse(extractJson(l2Response.text || "[]"));
+
+    // Normalize to objects if AI returned strings
+    if (rawStockData.length > 0 && typeof rawStockData[0] === 'string') {
+      rawStockData = rawStockData.map(code => ({ code, name: "" }));
+    }
+
+    console.log(`[Layer 2] Mapped ${rawStockData.length} raw candidates.`);
 
 
     // ------------------------------------------------------------------
@@ -662,7 +752,7 @@ const runDailyAnalysis = async () => {
     console.log("[Automation] Layer 2.5: Tech Filter (Cleaning Data)...");
 
     // This function checks Volume > 1000 and Price > MA20
-    const robustStocks = await filterCandidates(rawStockCodes);
+    const robustStocks = await filterCandidates(rawStockData);
     console.log(`[Layer 2.5] ${robustStocks.length} stocks passed the filter.`);
 
     // If too few stocks, maybe add some default indices or heavy weights? 
@@ -729,8 +819,21 @@ const runDailyAnalysis = async () => {
         ]
     `;
 
-    // Use 'layer3_decision' config (Default: Gemini 1.5 Pro)
-    const l3Response = await callAI('layer3_decision', l3Prompt);
+    // Use 'layer3_decision' step config (New System)
+    const l3Response = await callAI('layer3_decision', l3Prompt, {
+      variables: {
+        NEWS_SUMMARY: newsSummary,
+        CURRENT_PORTFOLIO: JSON.stringify(portfolioWithTA.map(p => ({
+          code: p.code,
+          name: p.name,
+          entryPrice: p.entryPrice,
+          ROI: p.roi ? p.roi.toFixed(1) + '%' : '0%',
+          TA_ACTION: p.ta.action,
+          TA_REASON: p.ta.technicalReason
+        }))),
+        CANDIDATES: JSON.stringify(robustStocks)
+      }
+    });
     const newPortfolioRaw = JSON.parse(extractJson(l3Response.text || "[]"));
 
 

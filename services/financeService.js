@@ -206,82 +206,73 @@ export async function getStockPrice(code) {
  * @param {string[]} stockCodes - List of stock codes (e.g., ["2330", "2603"])
  * @returns {Promise<object[]>} List of valid stocks with technical details
  */
-export async function filterCandidates(stockCodes) {
-    console.log(`[FinanceService] Tech Filter running on ${stockCodes.length} stocks...`);
+export async function filterCandidates(candidates) {
+    console.log(`[FinanceService] Tech Filter running on ${candidates.length} stocks...`);
     const validStocks = [];
-    const uniqueCodes = [...new Set(stockCodes)]; // Remove duplicates
 
-    for (const code of uniqueCodes) {
+    // Deduplicate by code
+    const uniqueMap = new Map();
+    candidates.forEach(c => {
+        const code = (typeof c === 'string') ? c : c.code;
+        if (!uniqueMap.has(code)) uniqueMap.set(code, typeof c === 'string' ? { code } : c);
+    });
+    const uniqueItems = Array.from(uniqueMap.values());
+
+    for (const item of uniqueItems) {
+        const code = item.code;
         try {
-            // Suffix logic logic mainly inside analyzeStockTechnicals, but we need raw history for volume
-            // Let's reuse analyzeStockTechnicals for simple trend checks (MA20)
-            // But for Volume > 1000, we need to inspect history.
-            // So we'll implement a customized fetch here or enhance analyzeStockTechnicals.
-            // To keep it efficient, let's just use analyzeStockTechnicals which already has data.
-            // Wait, analyzeStockTechnicals calculates indicators but doesn't return volume avg.
-            // Let's modify analyzeStockTechnicals to return volume info or just fetch here.
-
-            // Actually, let's fetch here to be precise about "Yesterday's Volume".
             const suffixes = ['.TW', '.TWO'];
             let historical = null;
             let successfulSymbol = "";
+            let stockName = item.name || "";
 
             for (const suffix of suffixes) {
                 try {
                     const symbol = `${code}${suffix}`;
                     const end = new Date();
                     const start = new Date();
-                    start.setDate(start.getDate() - 40); // Need enough for MA20 + buffer
+                    start.setDate(start.getDate() - 40);
 
                     const queryOptions = { period1: start.toISOString().split('T')[0], period2: end.toISOString().split('T')[0], interval: '1d' };
                     historical = await yahooFinance.historical(symbol, queryOptions);
+
                     if (historical && historical.length > 20) {
                         successfulSymbol = symbol;
+
+                        // Try to get name if missing
+                        if (!stockName) {
+                            try {
+                                const q = await yahooFinance.quote(symbol);
+                                if (q) stockName = q.shortName || q.longName || "";
+                            } catch (e) { }
+                        }
                         break;
                     }
                 } catch (e) { /* continue */ }
             }
 
-            if (!historical || historical.length < 20) continue; // Skip if no data
+            if (!historical || historical.length < 20) continue;
 
             const lastData = historical[historical.length - 1];
             const close = lastData.close;
             const volume = lastData.volume || 0;
 
-            // 1. Volume Filter: Yesterday Volume > 1000 lots (1 lot = 1000 shares)
-            // Yahoo Finance volume is in shares? Usually yes.
-            // So 1000 lots = 1,000,000 shares.
-            if (volume < 1000 * 1000) {
-                // console.log(`[Filter] ${code} rejected: Volume ${volume} < 1000 lots`);
-                continue;
-            }
+            // 1. Volume Filter: Yesterday Volume > 1000 lots
+            if (volume < 1000 * 1000) continue;
 
             // 2. Trend Filter: Price > MA20
-            // Calculate MA20 manually here to avoid double fetch
             const closes = historical.map(d => d.close);
             const sum20 = closes.slice(-20).reduce((a, b) => a + b, 0);
             const ma20 = sum20 / 20;
 
-            if (close < ma20) {
-                // console.log(`[Filter] ${code} rejected: Price ${close} < MA20 ${ma20}`);
-                continue;
-            }
-
-            // 3. RSI Filter (Optional but good): RSI > 50
-            // We can use technicalindicators lib or simple calc
-            // Let's skip complex RSI for now to save time/compute, or just stick to Price > MA20 + Vol which is strong enough.
-            // Plan said RSI > 50. Let's add it.
-            // Need ~14 days. We have 40.
-            const rsiInput = { values: closes, period: 14 };
-            // SMA was imported, let's import RSI too if needed, or just skip if library not ready.
-            // Checking imports... only SMA imported. 
-            // Let's stick to MA20 + Volume for now as "Code" layer implementation.
+            if (close < ma20) continue;
 
             validStocks.push({
+                ...item, // Keep existing metadata (theme, reason)
                 code: code,
-                name: "", // Name is hard to get from simple history, usually needs quote. AI can fill/fix name later or we use what we have.
+                name: stockName,
                 price: close,
-                volume: Math.round(volume / 1000), // in lots
+                volume: Math.round(volume / 1000),
                 tech_note: `Price(${close}) > MA20(${ma20.toFixed(2)})`
             });
 
@@ -290,6 +281,6 @@ export async function filterCandidates(stockCodes) {
         }
     }
 
-    console.log(`[FinanceService] Filter result: ${validStocks.length} passed out of ${uniqueCodes.length}`);
+    console.log(`[FinanceService] Filter result: ${validStocks.length} passed out of ${uniqueItems.length}`);
     return validStocks;
 }
