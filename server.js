@@ -385,40 +385,66 @@ app.post('/api/analyze/finalists', async (req, res) => {
       }
     } catch (e) { console.warn("[DB] No previous portfolio found."); }
 
-    console.log(`[Portfolio] Current Holdings: ${currentPortfolio.length} stocks.`);
+    // --- Technical Firewall: Pre-Filter ---
+    // We strictly identify who MUST stay (Keepers) and who MUST go (Leavers)
+    const keepers = [];
+    const leavers = []; // These are effectively sold before AI sees them
+
+    await Promise.all(currentPortfolio.map(async (p) => {
+      try {
+        const ta = await analyzeStockTechnicals(p.code);
+        // Sell Condition: RSI < 45
+        // Hold Condition: RSI >= 45 (Even if AI dislikes it, we keep it as per User Rule)
+        if (ta.rsi < 45) {
+          leavers.push({ ...p, reason: `[Firewall] RSI轉弱(${ta.rsi.toFixed(1)} < 45)` });
+        } else {
+          // Attach TA info for AI context
+          keepers.push({ ...p, ta });
+        }
+      } catch (error) {
+        console.error(`Error analyzing ${p.code}`, error);
+        keepers.push(p); // Safe default: Keep
+      }
+    }));
+
+    console.log(`[Firewall] Keepers: ${keepers.length} (${keepers.map(k => k.name)}), Leavers: ${leavers.length}`);
 
     // 2. Prompt for Rebalancing
+    // We only pass KEEPERS as the "Current Portfolio" to the AI.
+    // The AI's job is to FILL the remaining slots (5 - keepers.length).
     const prompt = `
         你是一位專業的基金經理人，負責管理一個「最多持股 5 檔」的台股投資組合。
         請使用「繁體中文」回答。
 
         市場概況：${newsSummary}
 
-        【目前持倉 (Current Portfolio)】：
-        ${JSON.stringify(currentPortfolio)}
+        【目前持倉 (Locked Holdings)】：
+        (這些股票技術面尚可，**必須保留**，不可賣出)
+        ${JSON.stringify(keepers.map(k => ({
+      code: k.code,
+      name: k.name,
+      entryPrice: k.entryPrice,
+      industry: k.industry,
+      rsi: k.ta?.rsi?.toFixed(1) || 'N/A'
+    })))}
 
-        【今日觀察名單 (New Candidates)】：
+        【今日觀察名單 (Candidates)】：
+        (請從中挑選最強勢的股票填補剩餘空位)
         ${JSON.stringify(candidates)}
 
         【決策任務】：
-        1. 檢視「目前持倉」與「今日觀察名單」。
-        2. 決定是否要「賣出」(剔除) 表現不佳或前景轉弱的持股。
-        3. 決定是否要「買入」潛力新股 (若空間不足，需先賣出)。
-        4. **嚴格遵守**：總持股數量不得超過 5 檔。
+        1. **核心原則**：你目前已持有 ${keepers.length} 檔股票 (Locked)。你還有 ${5 - keepers.length} 個空位。
+        2. 從「觀察名單」中挑選最佳標的填滿空位。
+        3. 若「觀察名單」都不好，可以空手 (不必硬湊 5 檔)。
+        4. **禁止賣出「目前持倉」的股票**。
 
-        【選股邏輯】：
-        - 優先保留強勢股 (獲利中、趨勢向上)。
-        - 優先剔除弱勢股 (虧損擴大、技術面轉空)。
-        - 新買入股票必須有極強的技術面或基本面理由。
-        - **請給出具體的技術分析理由、基本面理由以及進出場策略。**
-
-        【輸出格式】：僅限 JSON 陣列 (最終的 0~5 檔持股)。
+        【輸出格式】：僅限 JSON 陣列 (最終的持股名單)。
         [
-           // 若是保留原有持股，請保留原本的 entryPrice (進場價)
-           { "code": "2330", "name": "台積電", "entryPrice": 500, "reason": "續抱...理由...", "industry": "...", "status": "HOLD" },
+           // 必須包含所有 Locked Holdings
+           { "code": "2330", "name": "台積電", "entryPrice": 500, "reason": "【續抱】技術面仍強(RSI=60)...", "industry": "半導體", "status": "HOLD" },
            
-           // 若是新買入，請設定 status: "BUY" (後續會自動填入今日價格)
-           { "code": "2454", "name": "聯發科", "entryPrice": 0, "reason": "新納入...理由...", "industry": "...", "status": "BUY" }
+           // 新買入
+           { "code": "2454", "name": "聯發科", "entryPrice": 0, "reason": "【新納入】...", "industry": "IC設計", "status": "BUY" }
         ]
     `;
 
@@ -426,13 +452,41 @@ app.post('/api/analyze/finalists', async (req, res) => {
     const response = await callAI('layer3_decision', prompt, {
       variables: {
         NEWS_SUMMARY: newsSummary,
-        CURRENT_PORTFOLIO: JSON.stringify(currentPortfolio), // Note: manual API might lack TA details here, might need improvement later
+        CURRENT_PORTFOLIO: JSON.stringify(keepers),
         CANDIDATES: JSON.stringify(candidates)
       }
     });
     const text = response.text || "[]";
-    const newPortfolioRaw = JSON.parse(extractJson(text));
-    if (!Array.isArray(newPortfolioRaw)) throw new Error("AI output not array");
+    let newPortfolioRaw = JSON.parse(extractJson(text));
+    if (!Array.isArray(newPortfolioRaw)) newPortfolioRaw = []; // Fault tolerance
+
+    // --- Post-Process Enforcement ---
+    // 1. Ensure all Keepers are present
+    const keeperCodes = new Set(keepers.map(k => k.code));
+    const aiPickedCodes = new Set(newPortfolioRaw.map(p => p.code));
+
+    // Add back missing keepers
+    keepers.forEach(k => {
+      if (!aiPickedCodes.has(k.code)) {
+        newPortfolioRaw.unshift({
+          code: k.code,
+          name: k.name,
+          entryPrice: k.entryPrice,
+          industry: k.industry,
+          status: 'HOLD',
+          reason: '[Firewall] System Force Keep (RSI > 45)'
+        });
+      }
+    });
+
+    // 2. Limit to 5 (prioritize Keepers, then AI's first choices)
+    // Actually simpler: just slice to 5? 
+    // But we added keepers to front (unshift) or AI might have put them anywhere.
+    // Let's deduplicate first (just in case)
+    const uniqueMap = new Map();
+    newPortfolioRaw.forEach(p => uniqueMap.set(p.code, p));
+    const finalPortfolio = Array.from(uniqueMap.values()).slice(0, 5); // Hard limit 5 userspace
+
 
 
     // 3. Price Validation & Merging
@@ -670,6 +724,7 @@ app.get('/api/performance', (req, res) => {
       allTime: calculateStats(9999)
     };
 
+
     console.log(`[Performance] Calculated stats based on ${allTrades.length} sold trades.`);
     res.json(stats);
 
@@ -707,32 +762,42 @@ app.put('/api/reports/:id/prices', async (req, res) => {
     // --- Technical Firewall Logic ---
     console.log(`[Auto-Decision] Re-evaluating Portfolio for Report ${id}...`);
 
-    // 1. Sell Check (RSI < 45 or Loss > 10%)
+    // 1. Sell Check (Technical Firewall)
     for (const stock of currentPortfolio) {
       try {
         // Fetch fresh technicals
         const ta = await analyzeStockTechnicals(stock.code);
-        const currentPrice = ta.price || stock.price; // Fallback
+        const currentPrice = ta.price || stock.price;
+
+        // CRITICAL: Preserve original entry price.
         const entryPrice = stock.entryPrice || currentPrice;
-        const roi = ((currentPrice - entryPrice) / entryPrice) * 100;
+        const roi = entryPrice ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
+
+        console.log(`[Debug] ${stock.name} (${stock.code}): DB_Entry=${stock.entryPrice}, Cur=${currentPrice}, Used_Entry=${entryPrice}, ROI=${roi.toFixed(2)}%`);
+
 
         let shouldSell = false;
         let sellReason = "";
 
-        // Rule A: RSI < 45
+        // Firewall Rule: Force Keep if RSI > 45 (System Keep)
+        // Firewall Rule: Allow Sell only if RSI < 45 (Leavers)
+
         if (ta.rsi < 45) {
           shouldSell = true;
           sellReason = `[Auto] RSI轉弱(${ta.rsi.toFixed(1)} < 45)`;
-        }
-        // Rule B: Hard Stop Loss > 10%
-        else if (roi < -10) {
+        } else if (roi < -10) {
+          // Hard Stop Loss (Override Keep? user said "Sell < 45 OR Loss > 10")
+          // Let's assume Loss > 10 is a hard exit regardless of RSI? 
+          // Or should Firewall protect even deep loss? 
+          // Usually Stop Loss is supreme.
           shouldSell = true;
-          sellReason = `[Auto] 虧損過大(${roi.toFixed(1)}%)`;
+          sellReason = `[Auto] 停損出場(${roi.toFixed(1)}%)`;
         }
 
         if (shouldSell) {
           soldList.push({
             ...stock,
+            entryPrice, // Ensure we record the base
             exitPrice: currentPrice,
             roi: roi,
             reason: sellReason,
@@ -741,29 +806,30 @@ app.put('/api/reports/:id/prices', async (req, res) => {
           console.log(`[Auto-Decision] SOLD ${stock.name}: ${sellReason}`);
         } else {
           // Keep holding
+          // Keep holding
           nextPortfolio.push({
             ...stock,
             price: currentPrice,
-            roi: roi, // Update ROI display
+            currentPrice: currentPrice, // Explicitly update this for frontend consistency
+            entryPrice, // Persist this!
+            roi: roi,
             status: 'HOLD',
-            reason: ta.technicalReason || stock.reason
+            // Keep original AI comment + Append Technical Update (Avoid Duplication)
+            reason: stock.reason.split('\n\n[最新技術]:')[0] + (ta.technicalReason ? `\n\n[最新技術]: ${ta.technicalReason}` : '')
           });
         }
       } catch (e) {
         console.error(`[Auto-Decision] Error processing ${stock.code}:`, e);
-        nextPortfolio.push(stock); // Keep if error
+        nextPortfolio.push(stock);
       }
     }
 
-    // 2. Buy Check (If slots available < 5)
+    // 2. Buy Check (Fill slots)
     if (nextPortfolio.length < 5) {
       console.log(`[Auto-Decision] Portfolio has space (${nextPortfolio.length}/5). Checking candidates...`);
       for (const candidate of candidates) {
         if (nextPortfolio.length >= 5) break;
-
-        // Skip if already in portfolio or sold today
         if (nextPortfolio.some(p => p.code === candidate.code)) continue;
-        // if (soldList.some(s => s.code === candidate.code && s.soldDate === today)) continue; // Optional: Don't buy back same day
 
         try {
           const ta = await analyzeStockTechnicals(candidate.code);
@@ -772,7 +838,7 @@ app.put('/api/reports/:id/prices', async (req, res) => {
             nextPortfolio.push({
               code: candidate.code,
               name: candidate.name,
-              entryPrice: ta.price, // New Entry
+              entryPrice: ta.price, // Set Entry Price NOW
               price: ta.price,
               industry: candidate.theme || 'Auto-Pick',
               status: 'BUY',
@@ -927,21 +993,35 @@ const runDailyAnalysis = async () => {
       return { ...stock, ta };
     }));
 
+    // --- Technical Firewall: Pre-Filter ---
+    const keepers = [];
+    const leavers = [];
+
+    portfolioWithTA.forEach(p => {
+      if (p.ta.action === 'SELL') {
+        leavers.push({ ...p, reason: `[Firewall] RSI轉弱(${p.ta.rsi.toFixed(1)} < 45)` });
+      } else {
+        keepers.push(p);
+      }
+    });
+
+    console.log(`[Firewall-Daily] Keepers: ${keepers.length} (${keepers.map(k => k.name)}), Leavers: ${leavers.length}`);
+
+
     const l3Prompt = `
         你是一位風格激進、追求「短線爆發力」的避險基金經理人。
         請使用「繁體中文」回答。
 
         【市場概況】：${newsSummary}
         
-        【目前持倉 (Current Portfolio)】：
-        (請檢視 TA_ACTION，若為 SELL 必須賣出)
-        ${JSON.stringify(portfolioWithTA.map(p => ({
+        【目前持倉 (Locked Holdings)】：
+        (這些股票技術面尚可，**必須保留**，不可賣出)
+        ${JSON.stringify(keepers.map(p => ({
       code: p.code,
       name: p.name,
       entryPrice: p.entryPrice,
       ROI: p.roi ? p.roi.toFixed(1) + '%' : '0%',
-      TA_ACTION: p.ta.action,
-      TA_REASON: p.ta.technicalReason
+      TA: `RSI=${p.ta.rsi?.toFixed(1)}`
     })))}
 
         【強勢候選名單 (Candidates)】：
@@ -949,18 +1029,15 @@ const runDailyAnalysis = async () => {
         ${JSON.stringify(robustStocks)}
 
         【決策任務】：
-        1. **賣出決策**：
-           - 嚴格執行目前持倉的 TA_ACTION (SELL)。
-           - 若基本面題材消失，也可賣出。
-        2. **買入決策**：
-           - 從「強勢候選名單」中挑選與「今日題材」共振最強的股票。
-           - 若候選名單為空，或無好標的，可空手。
-        3. **總持股限制**：最多 5 檔。
+        1. **核心原則**：你目前已持有 ${keepers.length} 檔股票 (Locked)。你還有 ${5 - keepers.length} 個空位。
+        2. 從「強勢候選名單」中挑選最佳標的填滿空位。
+        3. 若候選名單都不好，可以空手。
+        4. **禁止賣出「Locked Holdings」的股票**。
 
         【輸出格式】(JSON Array of Final Portfolio):
         [
            { "code": "2330", "name": "台積電", "entryPrice": 500, "reason": "【續抱】...", "industry": "半導體", "status": "HOLD" },
-           { "code": "2603", "name": "長榮", "entryPrice": 0, "reason": "【新納入】紅海危機受惠，且量價齊揚...", "industry": "航運", "status": "BUY" }
+           { "code": "2603", "name": "長榮", "entryPrice": 0, "reason": "【新納入】紅海危機受惠...", "industry": "航運", "status": "BUY" }
         ]
     `;
 
@@ -968,18 +1045,44 @@ const runDailyAnalysis = async () => {
     const l3Response = await callAI('layer3_decision', l3Prompt, {
       variables: {
         NEWS_SUMMARY: newsSummary,
-        CURRENT_PORTFOLIO: JSON.stringify(portfolioWithTA.map(p => ({
-          code: p.code,
-          name: p.name,
-          entryPrice: p.entryPrice,
-          ROI: p.roi ? p.roi.toFixed(1) + '%' : '0%',
-          TA_ACTION: p.ta.action,
-          TA_REASON: p.ta.technicalReason
-        }))),
+        CURRENT_PORTFOLIO: JSON.stringify(keepers),
         CANDIDATES: JSON.stringify(robustStocks)
       }
     });
-    const newPortfolioRaw = JSON.parse(extractJson(l3Response.text || "[]"));
+
+    const text = l3Response.text || "[]";
+    let nextPortfolio = JSON.parse(extractJson(text));
+    if (!Array.isArray(nextPortfolio)) nextPortfolio = [];
+
+    // --- Post-Process Enforcement ---
+    const aiPickedCodes = new Set(nextPortfolio.map(p => p.code));
+
+    // Add back missing keepers
+    keepers.forEach(k => {
+      if (!aiPickedCodes.has(k.code)) {
+        nextPortfolio.unshift({
+          code: k.code,
+          name: k.name,
+          entryPrice: k.entryPrice,
+          industry: k.industry || k.theme, // Fallback
+          status: 'HOLD',
+          reason: '[Firewall] System Force Keep (RSI > 45)'
+        });
+      }
+    });
+
+    // Limit to 5
+    const uniqueMap = new Map();
+    nextPortfolio.forEach(p => uniqueMap.set(p.code, p));
+    const finalPortfolio = Array.from(uniqueMap.values()).slice(0, 5);
+
+
+
+    console.log(`[Portfolio] Rebalanced. New count: ${finalPortfolio.length}`);
+    // res.json removed - this is a background function
+
+
+    const newPortfolioRaw = finalPortfolio;
 
 
     // ------------------------------------------------------------------

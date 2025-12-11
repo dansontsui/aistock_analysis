@@ -22,11 +22,13 @@ export async function analyzeStockTechnicals(code) {
     // 1. Fetch Historical Data (Try suffixes)
     for (const suffix of suffixes) {
         const symbol = `${code}${suffix}`;
-        try {
-            const end = new Date();
-            const start = new Date();
-            start.setDate(start.getDate() - 200); // 200 days buffer
+        // Define dates outside try block for safety
+        const end = new Date();
+        end.setDate(end.getDate() + 1);
+        const start = new Date();
+        start.setDate(start.getDate() - 200);
 
+        try {
             const queryOptions = {
                 period1: start.toISOString().split('T')[0],
                 period2: end.toISOString().split('T')[0],
