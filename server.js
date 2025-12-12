@@ -787,6 +787,7 @@ app.put('/api/reports/:id/prices', async (req, res) => {
             ...stock,
             entryPrice, // Ensure we record the base
             exitPrice: currentPrice,
+            currentPrice: currentPrice, // Add currentPrice for tracking
             roi: roi,
             reason: sellReason,
             soldDate: new Date().toISOString().split('T')[0]
@@ -842,6 +843,27 @@ app.put('/api/reports/:id/prices', async (req, res) => {
     */
 
     const newData = { ...currentData, finalists: nextPortfolio, sold: soldList };
+
+    // Update Sold Stock Prices (if requested or implicitly done? The ID route implies "update prices")
+    // The route is PUT /api/reports/:id/prices.
+    // Let's also update sold list prices here so the user sees fresh data for sold items too.
+    if (soldList.length > 0) {
+      console.log(`[Auto-Decision] Updating prices for ${soldList.length} sold stocks...`);
+      const updatedSold = await Promise.all(soldList.map(async (s) => {
+        try {
+          const price = await getStockPrice(s.code);
+          if (price > 0) {
+            return { ...s, currentPrice: price };
+          }
+          return s;
+        } catch (e) {
+          console.error(`[Debug] Failed to update ${s.code}`, e);
+          return s;
+        }
+      }));
+      newData.sold = updatedSold;
+    }
+
     db.prepare('UPDATE daily_reports SET data = ? WHERE id = ?').run(JSON.stringify(newData), id);
     console.log(`[Auto-Decision] Done. Portfolio size: ${nextPortfolio.length}`);
 
@@ -1166,9 +1188,10 @@ const runDailyAnalysis = async () => {
     const soldStocks = currentPortfolio
       .filter(curr => !finalists.find(r => r.code === curr.code))
       .map(s => {
-        const exitPrice = priceMap.get(s.code) || s.currentPrice;
+        const currentPrice = priceMap.get(s.code) || s.currentPrice;
+        const exitPrice = currentPrice; // On the day of selling, exit price is the current price
         const roi = s.entryPrice ? ((exitPrice - s.entryPrice) / s.entryPrice) * 100 : 0;
-        return { ...s, exitPrice, roi, reason: "AI 換股操作 / 觸發停損利" };
+        return { ...s, exitPrice, currentPrice, roi, reason: "AI 換股操作 / 觸發停損利" };
       });
 
 

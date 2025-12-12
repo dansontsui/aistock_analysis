@@ -165,7 +165,7 @@ const App: React.FC = () => {
                 台股 AI 分析師
               </h1>
               <span className="text-xs text-slate-500 font-mono mt-0.5">
-                v2.7.12 <span className="text-indigo-600 font-bold bg-indigo-50 px-1 rounded">Latest: 新增持股天數追蹤</span>
+                v2.7.13 <span className="text-indigo-600 font-bold bg-indigo-50 px-1 rounded">Latest: 賣出股票現價追蹤</span>
               </span>
             </div>
           </div>

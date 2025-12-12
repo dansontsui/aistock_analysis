@@ -96,21 +96,32 @@ export const sendDailyReportEmail = async (report, subscribers = []) => {
               <tr style="background-color: #f3f4f6; text-align: left;">
                 <th style="padding: 12px; border: 1px solid #e5e7eb;">代號</th>
                 <th style="padding: 12px; border: 1px solid #e5e7eb;">名稱</th>
+                <th style="padding: 12px; border: 1px solid #e5e7eb;">持股天數</th>
                 <th style="padding: 12px; border: 1px solid #e5e7eb;">進場價</th>
                 <th style="padding: 12px; border: 1px solid #e5e7eb;">出場價</th>
+                <th style="padding: 12px; border: 1px solid #e5e7eb;">現價</th>
                 <th style="padding: 12px; border: 1px solid #e5e7eb;">報酬率</th>
                 <th style="padding: 12px; border: 1px solid #e5e7eb;">賣出理由</th>
               </tr>
             </thead>
             <tbody>
-              ${sold.map(s => {
+              ${sold.slice(0, 10).map(s => {
       const roiClass = s.roi >= 0 ? '#dc2626' : '#059669'; // Red for profit
+
+      // Calculate Days Held
+      const entryDate = new Date(s.entryDate || s.created_at || report.date);
+      const soldDate = new Date(s.soldDate || report.date);
+      const diffTime = Math.abs(soldDate.getTime() - entryDate.getTime());
+      const daysHeld = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
       return `
                   <tr>
                     <td style="padding: 12px; border: 1px solid #e5e7eb;">${s.code}</td>
                     <td style="padding: 12px; border: 1px solid #e5e7eb;">${s.name}</td>
+                    <td style="padding: 12px; border: 1px solid #e5e7eb; font-family: monospace;">${daysHeld} 天</td>
                     <td style="padding: 12px; border: 1px solid #e5e7eb;">${s.entryPrice}</td>
                     <td style="padding: 12px; border: 1px solid #e5e7eb;">${s.exitPrice}</td>
+                    <td style="padding: 12px; border: 1px solid #e5e7eb; font-weight: bold; color: #4b5563;">${s.currentPrice || '-'}</td>
                     <td style="padding: 12px; border: 1px solid #e5e7eb; color: ${roiClass}; font-weight: bold;">${s.roi ? s.roi.toFixed(2) : 0}%</td>
                     <td style="padding: 12px; border: 1px solid #e5e7eb; font-size: 0.9em; color: #4b5563;">${s.reason || 'AI 判斷調整'}</td>
                   </tr>
