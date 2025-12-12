@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { getPerformanceStats } from '../services/apiService';
 
 interface Stats {
     count: number;
@@ -51,8 +52,7 @@ const PerformanceDashboard: React.FC<{ refreshTrigger: number }> = ({ refreshTri
 
     useEffect(() => {
         setLoading(true);
-        fetch('http://localhost:8080/api/performance')
-            .then(res => res.json())
+        getPerformanceStats()
             .then(setData)
             .catch(console.error)
             .finally(() => setLoading(false));

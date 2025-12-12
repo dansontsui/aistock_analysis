@@ -193,3 +193,9 @@ export const clearHistoryAPI = async (password: string) => {
   }
   return response.json();
 };
+
+export const getPerformanceStats = async () => {
+  const response = await fetchWithFailover('/api/performance');
+  if (!response.ok) throw new Error("無法取得績效數據");
+  return response.json();
+};
