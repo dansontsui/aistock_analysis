@@ -97,9 +97,24 @@ const StockCard: React.FC<StockCardProps> = ({ stock, type, onUpdatePrice }) => 
                 <button onClick={() => setIsEditing(false)} className="text-red-500 hover:bg-red-100 rounded p-0.5">
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                 </button>
+                <button onClick={() => setIsEditing(false)} className="text-red-500 hover:bg-red-100 rounded p-0.5">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
               </div>
             ) : (
-              <div className="font-mono">{entryPrice}</div>
+              <div className="flex flex-col">
+                <div className="font-mono">{entryPrice}</div>
+                {isFinalist && item.entryDate && (
+                  <span className="text-[10px] text-slate-400 mt-0.5">
+                    {(() => {
+                      const start = new Date(item.entryDate);
+                      const end = new Date(); // Active stock -> held until now
+                      const diff = Math.ceil(Math.abs(end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+                      return `持股 ${diff} 天`;
+                    })()}
+                  </span>
+                )}
+              </div>
             )}
 
           </div>

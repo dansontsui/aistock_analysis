@@ -104,6 +104,8 @@ const HistoryTable: React.FC<HistoryTableProps> = ({ reports, onRefresh }) => {
                   <tr>
                     <th className="px-6 py-3">代號</th>
                     <th className="px-6 py-3">名稱</th>
+                    <th className="px-6 py-3">進場日</th>
+                    <th className="px-6 py-3">持股天數</th>
                     <th className="px-6 py-3">進場價</th>
                     <th className="px-6 py-3">出場價</th>
                     <th className="px-6 py-3">報酬率</th>
@@ -111,10 +113,19 @@ const HistoryTable: React.FC<HistoryTableProps> = ({ reports, onRefresh }) => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {report.sold.map((s, idx) => (
+                  {report.sold.map((s, idx) => {
+                     // Calculate Days Held
+                     const entryDate = new Date(s.entryDate || s.created_at || report.date); // Fallback if entryDate missing
+                     const soldDate = new Date(s.soldDate || report.date);
+                     const diffTime = Math.abs(soldDate.getTime() - entryDate.getTime());
+                     const daysHeld = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+
+                     return (
                     <tr key={idx} className="hover:bg-slate-50">
                       <td className="px-6 py-4 font-bold text-slate-700">{s.code}</td>
                       <td className="px-6 py-4 text-slate-600">{s.name}</td>
+                      <td className="px-6 py-4 text-slate-400 text-xs">{s.entryDate || '-'}</td>
+                      <td className="px-6 py-4 text-slate-600 font-mono">{daysHeld} 天</td>
                       <td className="px-6 py-4 text-slate-500">{s.entryPrice}</td>
                       <td className="px-6 py-4 text-slate-500">{s.exitPrice}</td>
                       <td className={`px-6 py-4 font-bold ${s.roi >= 0 ? 'text-red-500' : 'text-emerald-500'}`}>
@@ -124,7 +135,8 @@ const HistoryTable: React.FC<HistoryTableProps> = ({ reports, onRefresh }) => {
                         {s.reason || 'AI 綜合判斷賣出/換股操作'}
                       </td>
                     </tr>
-                  ))}
+                   );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -164,7 +176,7 @@ const HistoryTable: React.FC<HistoryTableProps> = ({ reports, onRefresh }) => {
           </div>
         )
       }
-    </div >
+    </div>
   );
 };
 
