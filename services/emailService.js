@@ -132,6 +132,47 @@ export const sendDailyReportEmail = async (report, subscribers = []) => {
       </div>
 
       <div style="margin-top: 30px; background-color: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); border: 1px solid #e5e7eb;">
+        <h2 style="font-size: 1.25rem; font-weight: bold; margin-bottom: 15px; border-left: 4px solid #8b5cf6; padding-left: 10px;">📊 績效追蹤 (Performance)</h2>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px;">
+          ${(() => {
+      const stats = report.performance;
+      if (!stats) return '<p>暫無績效數據</p>';
+
+      const renderCard = (label, data, isHoldings = false) => {
+        if (!data) return '';
+        const wrColor = data.winRate >= 50 ? '#dc2626' : '#059669';
+        const roiColor = data.totalRoi >= 0 ? '#dc2626' : '#059669';
+        const avgColor = data.avgRoi >= 0 ? '#dc2626' : '#059669';
+
+        return `
+               <div style="border: 1px solid ${isHoldings ? '#818cf8' : '#e5e7eb'}; background-color: ${isHoldings ? '#eef2ff' : '#f9fafb'}; border-radius: 8px; padding: 15px; text-align: center;">
+                 <h3 style="margin: 0 0 10px 0; color: #6b7280; font-size: 0.85em; font-weight: bold;">${label}</h3>
+                 <div style="margin-bottom: 5px;">
+                    <span style="font-size: 0.8em; color: #9ca3af;">Win Rate</span><br/>
+                    <strong style="color: ${wrColor}; font-size: 1.2em;">${data.winRate ? data.winRate.toFixed(0) : 0}%</strong>
+                 </div>
+                 <div style="margin-bottom: 5px;">
+                    <span style="font-size: 0.8em; color: #9ca3af;">Avg ROI</span><br/>
+                    <strong style="color: ${avgColor}; font-size: 1.1em;">${data.avgRoi ? data.avgRoi.toFixed(1) : 0}%</strong>
+                 </div>
+                 <div>
+                    <span style="font-size: 0.8em; color: #9ca3af;">Total ROI</span><br/>
+                    <strong style="color: ${roiColor}; font-size: 1.1em;">${data.totalRoi ? data.totalRoi.toFixed(1) : 0}%</strong>
+                 </div>
+               </div>
+               `;
+      };
+
+      return [
+        renderCard('近 30 天', stats.month1),
+        renderCard('近 3 個月', stats.month3),
+        renderCard('目前持倉 (未實現)', stats.currentHoldings, true)
+      ].join('');
+    })()}
+        </div>
+      </div>
+
+      <div style="margin-top: 30px; background-color: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); border: 1px solid #e5e7eb;">
         <h2 style="font-size: 1.25rem; font-weight: bold; margin-bottom: 15px; border-left: 4px solid #10b981; padding-left: 10px;">📈 目前最新持倉 (Current Portfolio)</h2>
         <p style="color: #6b7280; font-size: 0.9rem;">AI 已根據今日行情進行再平衡，以下是最新建議持股（上限 5 檔）：</p>
         ${portfolioHtml}
