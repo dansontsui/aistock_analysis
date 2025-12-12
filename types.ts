@@ -26,6 +26,7 @@ export interface WebSource {
 export interface Subscriber {
   id: number;
   email: string;
+  is_active?: number;
   created_at: string;
 }
 

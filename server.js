@@ -98,6 +98,16 @@ db.exec(`
 
 `);
 
+// --- Migration: Add 'is_active' to subscribers if not exists ---
+try {
+  const tableInfo = db.prepare("PRAGMA table_info(subscribers)").all();
+  const hasActive = tableInfo.some(col => col.name === 'is_active');
+  if (!hasActive) {
+    console.log("[Migration] Adding 'is_active' column to subscribers...");
+    db.prepare("ALTER TABLE subscribers ADD COLUMN is_active INTEGER DEFAULT 1").run();
+  }
+} catch (e) { console.error("[Migration] Failed to add is_active:", e); }
+
 // --- 3. AI CONFIGURATION & HELPER ---
 
 // Generic Call AI Function (Switchable Providers)
@@ -246,6 +256,22 @@ app.get('/api/subscribers', (req, res) => {
     const rows = db.prepare('SELECT * FROM subscribers ORDER BY id DESC').all();
     res.json(rows);
   } catch (error) { res.status(500).json({ error: 'Failed to fetch subscribers' }); }
+});
+
+app.post('/api/subscribers/toggle', (req, res) => {
+  try {
+    const { id, is_active } = req.body;
+    db.prepare('UPDATE subscribers SET is_active = ? WHERE id = ?').run(is_active ? 1 : 0, id);
+    res.json({ success: true });
+  } catch (error) { res.status(500).json({ error: 'Failed' }); }
+});
+
+app.post('/api/subscribers/batch', (req, res) => {
+  try {
+    const { is_active } = req.body;
+    db.prepare('UPDATE subscribers SET is_active = ?').run(is_active ? 1 : 0);
+    res.json({ success: true });
+  } catch (error) { res.status(500).json({ error: 'Failed' }); }
 });
 
 app.post('/api/subscribers', (req, res) => {
@@ -872,7 +898,14 @@ app.get('/api/backup', (req, res) => {
 });
 
 // --- AUTOMATION: Run Daily Analysis & Email ---
+let isAnalysisRunning = false;
+
 const runDailyAnalysis = async () => {
+  if (isAnalysisRunning) {
+    console.log("[Automation] Blocked: Analysis already running.");
+    return { success: false, error: 'Already running' };
+  }
+  isAnalysisRunning = true;
   console.log("[Automation] Starting Daily Analysis Job...");
 
   const today = getTodayString();
@@ -1166,11 +1199,12 @@ const runDailyAnalysis = async () => {
     const jsonData = JSON.stringify({ candidates, finalists, sources: [], sold: soldStocks, themes }); // Saved themes too
     const info = db.prepare('INSERT INTO daily_reports (date, timestamp, newsSummary, data) VALUES (?, ?, ?, ?)').run(today, timestamp, newsSummary, jsonData);
 
-    // Send Email
+    // Send Email (Filter by is_active)
     console.log("[Automation] Sending Email...");
     let subscriberEmails = [];
     try {
-      subscriberEmails = db.prepare('SELECT email FROM subscribers').all().map(r => r.email);
+      // Only select Active subscribers
+      subscriberEmails = db.prepare('SELECT email FROM subscribers WHERE is_active = 1').all().map(r => r.email);
     } catch (e) { }
 
     const reportData = { date: today, newsSummary, finalists, sold: soldStocks, candidates }; // Added candidates
@@ -1181,14 +1215,17 @@ const runDailyAnalysis = async () => {
   } catch (error) {
     console.error("[Automation] Job Failed:", error);
     return { success: false, error: error.message };
+  } finally {
+    isAnalysisRunning = false;
   }
 };
 
-// CRON Trigger Route
-app.post('/api/cron/trigger', async (req, res) => {
-  // Check secret if needed (Simple protection)
-  // const auth = req.headers['authorization'];
-  // if (auth !== `Bearer ${process.env.CRON_SECRET}`) return res.status(401).json({ error: 'Unauthorized' });
+// CRON Trigger Route (Supports both GET and POST)
+app.use('/api/cron/trigger', async (req, res) => {
+  if (isAnalysisRunning) {
+    console.warn("[Cron] Job skipped - Analysis already in progress.");
+    return res.status(429).json({ error: 'Analysis in progress' });
+  }
 
   // Run async (don't wait if timeout is a concern, but Cloud Scheduler needs 200 OK)
   // For Cloud Run Gen2, we can wait up to 60mins.

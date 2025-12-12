@@ -41,6 +41,44 @@ const EmailSubscription: React.FC = () => {
         } catch (e) { alert('移除失敗'); }
     };
 
+    const toggleSubscriber = async (id: number, currentStatus: number) => {
+        // Optimistic Update
+        const nextStatus = !currentStatus;
+        setSubscribers(prev => prev.map(s => s.id === id ? { ...s, is_active: nextStatus ? 1 : 0 } : s));
+
+        try {
+            await fetch('/api/subscribers/toggle', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, is_active: nextStatus })
+            });
+            // Background refresh to ensure consistency
+            fetchList();
+        } catch (e) {
+            alert('更新失敗，將還原狀態');
+            fetchList(); // Revert on error
+        }
+    };
+
+    const toggleAll = async (isActive: boolean) => {
+        // Optimistic Update
+        if (!confirm(`確定要${isActive ? '全部啟用' : '全部停用'}嗎?`)) return;
+
+        setSubscribers(prev => prev.map(s => ({ ...s, is_active: isActive ? 1 : 0 })));
+
+        try {
+            await fetch('/api/subscribers/batch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ is_active: isActive })
+            });
+            fetchList();
+        } catch (e) {
+            alert('更新失敗');
+            fetchList();
+        }
+    };
+
     return (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
             <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
@@ -51,7 +89,7 @@ const EmailSubscription: React.FC = () => {
             </h3>
 
             <p className="text-sm text-slate-500 mb-4">
-                新增 Email 至下方列表，每日分析完成後將自動發送報告至這些信箱。
+                新增 Email 至下方列表。勾選的信箱才會收到每日報告。
             </p>
 
             {/* Add Form */}
@@ -75,14 +113,31 @@ const EmailSubscription: React.FC = () => {
 
             {error && <p className="text-red-500 text-sm mb-4">{error}</p>}
 
+            {/* Bulk Actions */}
+            {subscribers.length > 0 && (
+                <div className="flex gap-2 mb-3 text-sm">
+                    <button onClick={() => toggleAll(true)} className="text-blue-600 hover:text-blue-800 hover:underline">全選 (發送)</button>
+                    <span className="text-slate-300">|</span>
+                    <button onClick={() => toggleAll(false)} className="text-slate-500 hover:text-slate-700 hover:underline">全不選 (暫停)</button>
+                </div>
+            )}
+
             {/* List */}
-            <div className="space-y-2">
+            <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
                 {subscribers.length === 0 ? (
                     <p className="text-center text-slate-400 py-4 text-sm">目前無訂閱者</p>
                 ) : (
                     subscribers.map(sub => (
-                        <div key={sub.id} className="flex justify-between items-center p-3 bg-slate-50 rounded-lg group">
-                            <span className="text-slate-700">{sub.email}</span>
+                        <div key={sub.id} className={`flex justify-between items-center p-3 rounded-lg border transition-all ${sub.is_active ? 'bg-indigo-50 border-indigo-200' : 'bg-slate-50 border-transparent opacity-60'}`}>
+                            <div className="flex items-center gap-3">
+                                <input
+                                    type="checkbox"
+                                    checked={!!sub.is_active}
+                                    onChange={() => toggleSubscriber(sub.id, sub.is_active || 0)}
+                                    className="w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500 cursor-pointer"
+                                />
+                                <span className={`font-medium ${sub.is_active ? 'text-indigo-900' : 'text-slate-500'}`}>{sub.email}</span>
+                            </div>
                             <button
                                 onClick={() => handleDelete(sub.id)}
                                 className="text-slate-400 hover:text-red-500 hover:bg-red-50 p-2 rounded-full transition-colors"

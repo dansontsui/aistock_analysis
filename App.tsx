@@ -160,7 +160,7 @@ const App: React.FC = () => {
                 台股 AI 分析師
               </h1>
               <span className="text-xs text-slate-500 font-mono mt-0.5">
-                v2.2 <span className="text-indigo-600 font-bold bg-indigo-50 px-1 rounded">Latest: 強制排版換行修正</span>
+                v2.5 <span className="text-indigo-600 font-bold bg-indigo-50 px-1 rounded">Latest: 修正 Email 設定同步問題</span>
               </span>
             </div>
           </div>
