@@ -160,7 +160,7 @@ const App: React.FC = () => {
                 台股 AI 分析師
               </h1>
               <span className="text-xs text-slate-500 font-mono mt-0.5">
-                v2.6 <span className="text-indigo-600 font-bold bg-indigo-50 px-1 rounded">Latest: 新聞與題材搜尋廣度升級</span>
+                v2.6.2 <span className="text-indigo-600 font-bold bg-indigo-50 px-1 rounded">Latest: 觀察名單新增 AI 選股理由</span>
               </span>
             </div>
           </div>

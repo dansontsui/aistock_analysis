@@ -149,7 +149,7 @@ export const sendDailyReportEmail = async (report, subscribers = []) => {
               <th style="padding: 12px; border: 1px solid #e5e7eb;">代號</th>
               <th style="padding: 12px; border: 1px solid #e5e7eb;">名稱</th>
               <th style="padding: 12px; border: 1px solid #e5e7eb;">現價</th>
-              <th style="padding: 12px; border: 1px solid #e5e7eb;">技術指標</th>
+              <th style="padding: 12px; border: 1px solid #e5e7eb;">AI 分析觀點</th>
             </tr>
           </thead>
           <tbody>

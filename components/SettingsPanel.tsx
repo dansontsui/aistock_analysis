@@ -49,12 +49,13 @@ const DEFAULT_PROMPTS: Record<string, string> = {
 2. 二階聯想：如「銅價漲」-> 電線電纜/PCB。
 3. 數量：每個題材至少列出 3-5 檔相關個股。
 
+
 輸出格式 (JSON Object Array):
 [
-  { "code": "2330", "name": "台積電", "theme": "AI" },
-  { "code": "2603", "name": "長榮", "theme": "航運" }
+  { "code": "2330", "name": "台積電", "theme": "AI", "reason": "先進製程產能滿載..." },
+  { "code": "2603", "name": "長榮", "theme": "航運", "reason": "紅海危機..." }
 ]
-(請務必包含 code 與 name，name 請用繁體中文)`,
+(請務必包含 code, name, theme 與 reason。reason 請用繁體中文簡述關聯性與看好理由)`,
 
     layer3_decision: `你是一位風格激進、追求「短線爆發力」的避險基金經理人。
 請使用「繁體中文」回答。

@@ -973,10 +973,10 @@ const runDailyAnalysis = async () => {
 
         輸出格式 (JSON Object Array):
         [
-          { "code": "2330", "name": "台積電", "theme": "AI" },
-          { "code": "2603", "name": "長榮", "theme": "航運" }
+          { "code": "2330", "name": "台積電", "theme": "AI", "reason": "先進製程產能滿載，獨家供應輝達晶片" },
+          { "code": "2603", "name": "長榮", "theme": "航運", "reason": "紅海危機導致運價指數上漲" }
         ]
-        (請務必包含 code 與 name，name 請用繁體中文)
+        (請務必包含 code, name, theme 與 reason。reason 請用繁體中文簡述關聯性與看好理由)
     `;
 
     // Use 'layer2_mapping' config (Default: Qwen Turbo/Max for reasoning)
@@ -1094,10 +1094,15 @@ const runDailyAnalysis = async () => {
     if (!Array.isArray(nextPortfolio)) nextPortfolio = [];
 
     // --- Post-Process Enforcement ---
+    // 1. Ensure all codes are strings for consistent Map keys
+    nextPortfolio.forEach(p => p.code = String(p.code).trim());
+    keepers.forEach(k => k.code = String(k.code).trim());
+
     const aiPickedCodes = new Set(nextPortfolio.map(p => p.code));
 
-    // Add back missing keepers
-    keepers.forEach(k => {
+    // 2. Add back missing keepers (Firewall rule: Must Keep)
+    // We unshift them to the front to prioritize them
+    [...keepers].reverse().forEach(k => {
       if (!aiPickedCodes.has(k.code)) {
         nextPortfolio.unshift({
           code: k.code,
@@ -1110,15 +1115,19 @@ const runDailyAnalysis = async () => {
       }
     });
 
-    // Limit to 5
+    // 3. Deduplicate (Last write wins usually, but here we want to keep current updated props)
+    // We iterate portfolio and fill map.
     const uniqueMap = new Map();
     nextPortfolio.forEach(p => uniqueMap.set(p.code, p));
+
+    // 4. STRICT LIMIT TO 5
+    // We convert to array and take top 5.
+    // If we have > 5 keepers, we technically violate the rule "Keep all keepers" OR "Limit 5".
+    // Rules say "Keepers must be kept". So if > 5 keepers, we keep them all but add no new ones?
+    // Let's stick to 5 for now. If keepers > 5, we keep top 5 keepers.
     const finalPortfolio = Array.from(uniqueMap.values()).slice(0, 5);
 
-
-
     console.log(`[Portfolio] Rebalanced. New count: ${finalPortfolio.length}`);
-    // res.json removed - this is a background function
 
 
     const newPortfolioRaw = finalPortfolio;
@@ -1128,16 +1137,6 @@ const runDailyAnalysis = async () => {
     // Finalization: Price Check & Save
     // ------------------------------------------------------------------
     console.log("[Automation] Finalizing Report...");
-
-    // Helper to fetch prices including candidates (for UI display)
-    // Candidates in UI now comes from 'robustStocks' (Layer 2.5 winners)
-    // Let's attach names to robustStocks if possible? 
-    // Since robustStocks items (from filterCandidates) might not have Names yet (filterCandidates didn't return names).
-    // We can fetch names from final portfolio or just leave as code for now.
-    // Ideally we want names. 'yahoo-finance' historical doesn't give name. 
-    // We can use 'quote' in filterCandidates or just live with codes in the "Candidates" section of the report.
-    // Or we can try to guess names from Layer 2 (AI output raw codes).
-    // Let's just store Code/Price/Note in candidates.
 
     // Get real-time prices for Finalists to calculate ROI correctly
     const finalCodes = newPortfolioRaw.map(i => i.code);
@@ -1153,7 +1152,10 @@ const runDailyAnalysis = async () => {
     // 1. Process Finalists
     const finalists = newPortfolioRaw.map(item => {
       const code = String(item.code).trim();
-      const currentPrice = priceMap.get(code) || item.currentPrice || 0;
+      let currentPrice = priceMap.get(code) || item.currentPrice || 0;
+
+      // Formatting: Round current price to 2 decimals
+      currentPrice = parseFloat(currentPrice.toFixed(2));
 
       let entryPrice = parseFloat(item.entryPrice) || 0;
       let entryDate = item.entryDate || getTodayString();
@@ -1163,6 +1165,9 @@ const runDailyAnalysis = async () => {
         entryPrice = currentPrice;
         entryDate = getTodayString();
       }
+
+      // Formatting: Round entry price to 2 decimals
+      entryPrice = parseFloat(entryPrice.toFixed(2));
 
       const roi = entryPrice ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
 
@@ -1178,13 +1183,25 @@ const runDailyAnalysis = async () => {
     });
 
     // 2. Process Candidates (for UI: "今日觀察名單")
-    const candidates = robustStocks.map(s => ({
-      code: s.code,
-      name: s.name || "", // Use name from Tech Filter
-      price: priceMap.get(s.code) || s.price,
-      reason: s.tech_note,
-      industry: "System Filtered"
-    }));
+    const candidates = robustStocks.map(s => {
+      const code = s.code;
+      let price = priceMap.get(code) || s.price || 0;
+      price = parseFloat(price.toFixed(2)); // Round to 2 decimals
+
+      // Combine AI Reason and Technical Note for display
+      // s.reason comes from Layer 2 (AI), s.tech_note comes from Layer 2.5 (Filter)
+      const aiReason = s.reason ? `🎯 ${s.reason}` : `AI Recommended: ${s.theme}`;
+      const techReason = s.tech_note ? `📊 ${s.tech_note}` : '';
+      const combinedReason = `${aiReason}<br/><span style="color:#6b7280; font-size:0.85em;">${techReason}</span>`;
+
+      return {
+        code: code,
+        name: s.name || "",
+        price: price,
+        reason: combinedReason, // HTML formatted for Email/UI
+        industry: s.theme || "System Filtered"
+      };
+    });
 
     // 3. Process Sold
     const soldStocks = currentPortfolio
