@@ -1069,7 +1069,7 @@ const runDailyAnalysis = async () => {
           entryPrice: k.entryPrice,
           industry: k.industry || k.theme, // Fallback
           status: 'HOLD',
-          reason: '[Firewall] System Force Keep (RSI > 45)'
+          reason: k.reason || '[系統續抱] 技術面強勢 (RSI > 45)，持續看多'
         });
       }
     });
