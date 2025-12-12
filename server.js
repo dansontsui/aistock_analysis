@@ -57,7 +57,7 @@ if (process.env.DB_PATH) {
 let db;
 try {
   db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
+  db.pragma('journal_mode = DELETE');
   console.log(`[Database] Connected to ${dbPath}`);
 } catch (error) {
   console.error("[CRITICAL] Database connection failed:", error);
@@ -77,6 +77,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS subscribers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     email TEXT UNIQUE NOT NULL,
+    is_active INTEGER DEFAULT 1,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
