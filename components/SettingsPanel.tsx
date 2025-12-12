@@ -17,23 +17,25 @@ const DEFAULT_STEPS = [
 // --- Default Prompts (Variables: {{TODAY}}, {{THEMES}}, {{NEWS_SUMMARY}}, {{CURRENT_PORTFOLIO}}, {{CANDIDATES}}) ---
 const DEFAULT_PROMPTS: Record<string, string> = {
     layer1_news: `你是一位負責監控全球金融市場的「首席情報官」。請使用「繁體中文」回答。
-任務：廣泛搜尋今日 ({{TODAY}}) 的「全球」與「台灣」財經新聞，找出市場的「資金流向」與「熱門題材」。
+任務：廣泛且深入地搜尋今日 ({{TODAY}}) 的「全球」與「台灣」財經新聞，撰寫一份「詳盡的市場情報報告」。
 
-重點關注：
-1. 國際金融：美股強勢板塊 (AI, 半導體, 傳產)、Fed 態度、美債殖利率。
-2. 大宗商品：原油、黃金、銅價、航運指數 (SCFI/BDI)。
-3. 台灣熱點：本土政策 (重電/房市)、法說會利多、營收公佈。
+重點搜尋與分析範圍：
+1. 國際金融：美股四大指數、科技巨頭 (Nvidia, Apple, TSMC ADR) 動態、Fed 利率預期、美債殖利率。
+2. 關鍵原物料：WTI/Brent 原油、黃金、銅價、比特幣 (Bitcoin)。
+3. 航運與貿易：SCFI/BDI 指數、紅海/地緣政治影響。
+4. 台灣熱點：半導體供應鏈、AI 伺服器、重電綠能、營建資產、法說會與營收公佈。
 
-限制：
-- 禁止直接選股，只提取「題材關鍵字」。
-- 廣度優先，涵蓋傳產、金融、原物料。
+報告要求：
+- **廣度與深度並重**：不要只列標題，說明新聞背景與對市場的具體影響。
+- **字數要求**：目標約 800~1000 字的詳盡摘要，確保資訊完整。
+- **禁止直接選股**：在 themes 欄位僅提取「題材關鍵字」。
 
 輸出格式 (JSON):
 {
-  "newsSummary": "今日市場重點整理 (請條列式，每點換行，使用 • 符號)...",
+  "newsSummary": "今日市場重點整理 (請條列式，每點換行，使用 • 符號，內容需詳盡)...",
   "themes": [
-    { "keyword": "航運", "impact": "High", "summary": "紅海危機升級，運價看漲。" },
-    { "keyword": "AI伺服器", "impact": "High", "summary": "NVIDIA財報優於預期。" }
+    { "keyword": "航運", "impact": "High", "summary": "紅海危機升級，運價指數上漲..." },
+    { "keyword": "CoWoS", "impact": "High", "summary": "台積電產能供不應求..." }
   ]
 }`,
 
