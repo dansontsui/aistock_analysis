@@ -1,127 +1,109 @@
-import YahooFinance from 'yahoo-finance2';
 import { SMA, RSI } from 'technicalindicators';
 
-// Create instance with options
-const yahooFinance = new YahooFinance({
-    suppressNotices: ['yahooSurvey', 'deprecated', 'ripHistorical']
-});
+const BASE_URL = 'https://api.fugle.tw/marketdata/v1.0/stock';
+
+// Helper: Sleep
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Helper: Rate Limited Fetcher
+// Simple implementation: Just sleep 1.2s before every request to be safe (Limit 60/min = 1/s)
+const callFugle = async (endpoint) => {
+    // Lazy load env var to avoid ESM hoisting issues (server.js loads env later)
+    const FUGLE_API_KEY = process.env.FUGLE_API_KEY;
+
+    if (!FUGLE_API_KEY) throw new Error("FUGLE_API_KEY missing");
+
+    // Global rate limiter (naive) - ensure we don't hit 429
+    await sleep(1100);
+
+    const url = `${BASE_URL}${endpoint}`;
+    try {
+        const response = await fetch(url, {
+            headers: { 'X-API-KEY': FUGLE_API_KEY }
+        });
+
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`Fugle API Error ${response.status}: ${errText} `);
+        }
+        return await response.json();
+    } catch (error) {
+        console.error(`[Fugle] Request failed: ${url} `, error.message);
+        throw error;
+    }
+};
+
+// Helper: Strip Suffix (2330.TW -> 2330)
+const cleanSymbol = (code) => {
+    return String(code).replace('.TW', '').replace('.TWO', '').trim();
+};
 
 /**
  * Fetch historical data and calculate technical indicators
- * Supports both .TW (TSE) and .TWO (OTC) suffixes automatically.
- * @param {string} code - Stock code (e.g., "2330", "8358")
- * @returns {Promise<object>} Technical analysis result
+ * Uses Fugle Historical Candles API
  */
 export async function analyzeStockTechnicals(code) {
-    // Suffixes to try: .TW (Listed), .TWO (OTC)
-    const suffixes = ['.TW', '.TWO'];
-    let historical = null;
-    let successfulSymbol = "";
-    let lastError = null;
-
-    // 1. Fetch Historical Data (Try suffixes)
-    for (const suffix of suffixes) {
-        const symbol = `${code}${suffix}`;
-        // Define dates outside try block for safety
-        const end = new Date();
-        end.setDate(end.getDate() + 1);
-        const start = new Date();
-        start.setDate(start.getDate() - 200);
-
-        try {
-            const queryOptions = {
-                period1: start.toISOString().split('T')[0],
-                period2: end.toISOString().split('T')[0],
-                interval: '1d'
-            };
-
-            // Retry logic for connection glitches per symbol
-            let retries = 3;
-            while (retries > 0) {
-                try {
-                    historical = await yahooFinance.historical(symbol, queryOptions);
-                    if (historical && historical.length > 0) {
-                        successfulSymbol = symbol;
-                        break; // Inner retry break
-                    }
-                } catch (err) {
-                    if (err.message.includes('No data found') || err.message.includes('delisted') || err.message.includes('Not Found')) {
-                        throw err; // Break to outer loop to try next suffix
-                    }
-                    retries--;
-                    if (retries === 0) throw err;
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                }
-            }
-
-            if (successfulSymbol) break; // Found data, stop trying suffixes
-
-        } catch (err) {
-            // console.warn(`[FinanceService] info: ${symbol} not found or failed.`);
-            lastError = err;
-        }
-    }
-
-    if (!successfulSymbol || !historical || historical.length < 60) {
-        console.warn(`[FinanceService] Failed to fetch data for ${code} (tried .TW, .TWO). Reason: ${lastError?.message || 'Data insufficient'}`);
-        return {
-            code,
-            status: 'UNKNOWN',
-            reason: lastError?.message || '資料不足無法分析',
-            signals: [],
-            action: 'NEUTRAL',
-            technicalReason: '無法取得股價資料'
-        };
-    }
+    const symbol = cleanSymbol(code);
 
     try {
-        // ... Logic continues with 'historical' ...
-        // Sort by date ascending just in case
-        // historical.sort((a, b) => new Date(a.date) - new Date(b.date));
+        // Calculate dates: 200 days approx
+        const end = new Date();
+        const start = new Date();
+        start.setDate(start.getDate() - 300); // Fetch enough for MA60
+
+        const from = start.toISOString().split('T')[0];
+        const to = end.toISOString().split('T')[0];
+
+        const data = await callFugle(`/historical/candles/${symbol}?from=${from}&to=${to}&fields=open,high,low,close,volume`);
+
+        // Fugle returns { symbol, type, data: [ { date, open, high, low, close, volume }, ... ] }
+        if (!data || !data.data || data.data.length < 60) {
+            return {
+                code,
+                action: 'NEUTRAL',
+                technicalReason: '資料不足無法分析',
+                signals: [],
+                price: 0,
+                rsi: 50
+            };
+        }
+
+        const historical = data.data.reverse(); // Fugle usually returns Descending (Newest first)? No, docs say Ascending usually? 
+        // Let's check docs or assume standard API. 
+        // Fugle Candles usually returns array. Let's sort by date ASC just in case.
+        historical.sort((a, b) => new Date(a.date) - new Date(b.date));
 
         const closes = historical.map(d => d.close);
-        const highs = historical.map(d => d.high);
         const lastClose = closes[closes.length - 1];
         const prevClose = closes[closes.length - 2];
 
-        // 2. Calculate Indicators
+        // Calculate Indicators
         const ma5 = SMA.calculate({ period: 5, values: closes });
-        const ma10 = SMA.calculate({ period: 10, values: closes });
         const ma20 = SMA.calculate({ period: 20, values: closes });
         const ma60 = SMA.calculate({ period: 60, values: closes });
 
-        // Calculate RSI (Period 14)
-        const rsiInput = { values: closes, period: 14 };
-        const rsiValues = RSI.calculate(rsiInput);
+        const rsiValues = RSI.calculate({ values: closes, period: 14 });
         const currentRSI = rsiValues.length > 0 ? rsiValues[rsiValues.length - 1] : 50;
 
-        // Get latest values
         const currentMA5 = ma5[ma5.length - 1];
-        const currentMA10 = ma10[ma10.length - 1];
         const currentMA20 = ma20[ma20.length - 1];
         const currentMA60 = ma60[ma60.length - 1];
 
-        // 3. Logic Implementation
         const analysis = {
             code,
-            symbol: successfulSymbol,
+            symbol: symbol,
             price: lastClose,
             change: lastClose - prevClose,
             ma5: currentMA5,
-            ma10: currentMA10,
             ma20: currentMA20,
             ma60: currentMA60,
             rsi: currentRSI,
-
-            // Signals
             signals: [],
             action: 'NEUTRAL',
             technicalReason: ''
         };
 
-        // --- RSI Firewall Logic ---
-        // BUY Logic: RSI > 55 (Strong Momentum)
-        // SELL Logic: RSI < 45 (Weak Momentum)
+        // --- RSI Logic ---
         if (currentRSI > 55) {
             analysis.signals.push('RSI_BULLISH');
             analysis.action = 'BUY';
@@ -134,72 +116,60 @@ export async function analyzeStockTechnicals(code) {
             analysis.technicalReason += `RSI盤整(${currentRSI.toFixed(1)}); `;
         }
 
-        // MA Logic (Secondary Confirmation)
+        // MA Logic
         if (lastClose > currentMA20) {
             analysis.signals.push('MA20_BULLISH');
-            // If RSI is OK but price > MA20, it's a good HOLD/BUY context
             if (analysis.action === 'NEUTRAL') analysis.action = 'HOLD';
         } else {
             analysis.signals.push('MA20_BEARISH');
-            // Price below MA20 is dangerous
             if (analysis.action === 'HOLD') analysis.action = 'SELL';
         }
 
-        // Final consolidation of reason
-        if (analysis.action === 'BUY') analysis.technicalReason = `✅ [強勢] ${analysis.technicalReason}`;
-        if (analysis.action === 'SELL') analysis.technicalReason = `❌ [弱勢] ${analysis.technicalReason}`;
+        if (analysis.action === 'BUY') analysis.technicalReason = `✅[強勢] ${analysis.technicalReason} `;
+        if (analysis.action === 'SELL') analysis.technicalReason = `❌[弱勢] ${analysis.technicalReason} `;
 
         return analysis;
+
     } catch (err) {
-        console.error(`[FinanceService] Error analyzing ${code}:`, error.message);
+        console.error(`[FinanceService] Error analyzing ${code}: `, err.message);
         return {
             code,
-            error: error.message,
+            error: err.message,
             action: 'NEUTRAL',
-            technicalReason: '技術分析運算錯誤',
+            technicalReason: 'API 連線錯誤',
             signals: []
         };
     }
 }
 
 /**
- * Get real-time/delayed price from Yahoo Finance
- * Supports both .TW and .TWO suffixes.
- * @param {string} code 
- * @returns {Promise<number>} price (or 0 if failed)
+ * Get real-time price from Fugle Intraday Quote
  */
 export async function getStockPrice(code) {
-    const suffixes = ['.TW', '.TWO'];
+    const symbol = cleanSymbol(code);
+    try {
+        const data = await callFugle(`/intraday/quote/${symbol}`);
 
-    for (const suffix of suffixes) {
-        const symbol = `${code}${suffix}`;
-        try {
-            const quote = await yahooFinance.quote(symbol);
-            if (quote && quote.regularMarketPrice) {
-                return Number(quote.regularMarketPrice.toFixed(2));
-            }
-        } catch (e) {
-            // Ignore error and try next suffix, unless it's a network error maybe?
-            // console.warn(`[FinanceService] Price fetch failed for ${symbol}: ${e.message}`);
-        }
+        // Fugle Intraday Quote returns the quote object directly (flat)
+        // structure: { lastPrice: 1480, closePrice: 1480, lastTrade: { price: 1480 }, ... }
+        const price = data.lastPrice || data.closePrice || data.lastTrade?.price;
+        return Number(price) || 0;
+
+    } catch (e) {
+        console.warn(`[FinanceService] Price fetch failed for ${code}: ${e.message} `);
+        return 0;
     }
-
-    // If we reach here, both failed
-    console.warn(`[FinanceService] Failed to get price for ${code} (checked .TW, .TWO)`);
-    return 0;
 }
 
 /**
  * Layer 2.5: The Tech Filter
- * Filters a list of stock codes based on Volume, Trend (MA), and RSI.
- * @param {string[]} stockCodes - List of stock codes (e.g., ["2330", "2603"])
- * @returns {Promise<object[]>} List of valid stocks with technical details
+ * Filters a list of stock codes based on Volume and Trend, using Fugle.
  */
 export async function filterCandidates(candidates) {
-    console.log(`[FinanceService] Tech Filter running on ${candidates.length} stocks...`);
+    console.log(`[FinanceService] Tech Filter running on ${candidates.length} stocks using Fugle...`);
     const validStocks = [];
 
-    // Deduplicate by code
+    // Deduplicate
     const uniqueMap = new Map();
     candidates.forEach(c => {
         const code = (typeof c === 'string') ? c : c.code;
@@ -207,73 +177,87 @@ export async function filterCandidates(candidates) {
     });
     const uniqueItems = Array.from(uniqueMap.values());
 
+    // Process sequentially with delay to respect Rate Limit (60/min)
     for (const item of uniqueItems) {
-        const code = item.code;
+        const code = String(item.code).trim();
+        console.log(`[Filter] Checking ${code}...`);
+
         try {
-            const suffixes = ['.TW', '.TWO'];
-            let historical = null;
-            let successfulSymbol = "";
-            let stockName = item.name || "";
+            // Re-use analyzeStockTechnicals to get OHLCV and RSI
+            // It already has the 1.1s sleep built-in
+            const ta = await analyzeStockTechnicals(code);
 
-            for (const suffix of suffixes) {
-                try {
-                    const symbol = `${code}${suffix}`;
-                    const end = new Date();
-                    const start = new Date();
-                    start.setDate(start.getDate() - 40);
+            // Access local scope historical if possible? 
+            // analyzeStockTechnicals calls callFugle which has delay.
+            // But we also need Volume. analyzeStockTechnicals returns RSI and Close, but maybe not Volume?
+            // Actually it calculates RSI/MA from historical.
+            // Let's check validStocks push logic.
 
-                    const queryOptions = { period1: start.toISOString().split('T')[0], period2: end.toISOString().split('T')[0], interval: '1d' };
-                    historical = await yahooFinance.historical(symbol, queryOptions);
+            if (ta.error || ta.price === 0) continue;
 
-                    if (historical && historical.length > 20) {
-                        successfulSymbol = symbol;
+            // We need Volume. analyzeStockTechnicals internal 'historical' has volume, but it returns 'analysis' object.
+            // To properly filter volume, we should probably fetch data directly here or modify analyzeStockTechnicals to return volume.
+            // BUT, to keep it simple and efficient (1 call per stock), let's assume if it passed 'analyzeStockTechnicals' successfully,
+            // we can trust it or just skip volume check? 
+            // NO, Volume > 1000 is a requirement.
 
-                        // Try to get name if missing
-                        if (!stockName) {
-                            try {
-                                const q = await yahooFinance.quote(symbol);
-                                if (q) stockName = q.shortName || q.longName || "";
-                            } catch (e) { }
-                        }
-                        break;
-                    }
-                } catch (e) { /* continue */ }
+            // Let's modify analyzeStockTechnicals slightly or just fetch again? 
+            // Fetching again is bad (2x requests).
+            // Let's trust Price > MA20 which is done in analyzeStockTechnicals logic (MA20_BULLISH signal).
+            // But Volume? 
+
+            // FOR NOW: Let's assume high volume if it's an AI pick, or we accept we lose volume filter strictly?
+            // BETTER:  We can fetch candles here directly.
+
+            const symbol = cleanSymbol(code);
+            const end = new Date();
+            const start = new Date();
+            start.setDate(start.getDate() - 40);
+            const from = start.toISOString().split('T')[0];
+            const to = end.toISOString().split('T')[0];
+
+            // This call sleeps 1s
+            const raw = await callFugle(`/historical/candles/${symbol}?from=${from}&to=${to}&fields=open,high,low,close,volume`);
+
+            if (!raw || !raw.data || raw.data.length < 20) continue;
+            const hist = raw.data; // Fugle is usually newest?? No, verify.
+            // Docs: "The order of data in array is ascending by date." (Oldest first)
+
+            const lastData = hist[hist.length - 1];
+            const close = lastData.close;
+            const volume = lastData.volume || 0; // Fugle volume is usually in 'shares' or 'lots'? 
+            // Fugle API Volume is "Turnover (shares)" or "Volume (shares)"?
+            // Docs: volume (成交量，單位：股)
+            // Requirement: > 1000 "lots" (張) => > 1,000,000 shares
+
+            if (volume < 1000 * 1000) {
+                // console.log(`[Filter] ${ code } Volume too low: ${ Math.round(volume / 1000) } lots`);
+                continue;
             }
 
-            if (!historical || historical.length < 20) continue;
-
-            const lastData = historical[historical.length - 1];
-            const close = lastData.close;
-            const volume = lastData.volume || 0;
-
-            // 1. Volume Filter: Yesterday Volume > 1000 lots
-            if (volume < 1000 * 1000) continue;
-
-            // 2. Trend Filter: Price > MA20
-            const closes = historical.map(d => d.close);
+            const closes = hist.map(d => d.close);
             const sum20 = closes.slice(-20).reduce((a, b) => a + b, 0);
             const ma20 = sum20 / 20;
 
             if (close < ma20) continue;
 
-            // 2.5 Calculate RSI for Filter Context (so AI knows momentum)
             const rsiVal = RSI.calculate({ values: closes, period: 14 });
             const currentRSI = rsiVal.length > 0 ? rsiVal[rsiVal.length - 1] : 50;
 
             validStocks.push({
-                ...item, // Keep existing metadata (theme, reason)
+                ...item,
                 code: code,
-                name: stockName,
+                name: item.name || "", // Fugle doesn't return name in candles. We rely on AI's name for now.
                 price: Number(close.toFixed(2)),
                 volume: Math.round(volume / 1000),
-                tech_note: `Price(${close.toFixed(2)}) > MA20(${ma20.toFixed(2)}) | RSI=${currentRSI.toFixed(1)}`
+                tech_note: `Price(${close.toFixed(2)}) > MA20(${ma20.toFixed(2)}) | RSI=${currentRSI.toFixed(1)} `
             });
 
-        } catch (error) {
-            console.warn(`[Filter] Error checking ${code}: ${error.message}`);
+        } catch (e) {
+            console.warn(`[Filter] API Error for ${code}: ${e.message} `);
         }
     }
 
-    console.log(`[FinanceService] Filter result: ${validStocks.length} passed out of ${uniqueItems.length}`);
+    console.log(`[FinanceService] Filter result: ${validStocks.length} passed.`);
     return validStocks;
 }

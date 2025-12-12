@@ -604,15 +604,15 @@ app.post('/api/analyze/prices', async (req, res) => {
     const { stocks } = req.body; // Expecting array of PortfolioItem
     if (!stocks || stocks.length === 0) return res.json([]);
 
-    // Use Yahoo Finance to fetch prices
+    // Use Yahoo Finance (now Fugle) to fetch prices sequentially to avoid Rate Limit (429)
     const priceMap = new Map();
-    await Promise.all(stocks.map(async (stock) => {
+    for (const stock of stocks) {
       const price = await getStockPrice(stock.code);
       if (price > 0) priceMap.set(String(stock.code), price);
-    }));
+    }
 
     const updatedStocks = stocks.map(stock => {
-      const currentPrice = priceMap.get(stock.code) || stock.currentPrice;
+      const currentPrice = priceMap.get(String(stock.code)) || stock.currentPrice;
 
       // Self-healing: If entryPrice is missing or 0, set it to currentPrice (treat as new entry)
       let entryPrice = stock.entryPrice;
@@ -751,8 +751,27 @@ app.get('/api/performance', (req, res) => {
       month3: calculateStats(90),
       month6: calculateStats(180),
       year1: calculateStats(365),
-      allTime: calculateStats(9999)
+      allTime: calculateStats(9999),
+      currentHoldings: { count: 0, wins: 0, winRate: 0, avgRoi: 0, totalRoi: 0 } // Default
     };
+
+    // Calculate Current Holdings Stats
+    try {
+      const latestReport = db.prepare('SELECT data FROM daily_reports ORDER BY timestamp DESC LIMIT 1').get();
+      if (latestReport) {
+        const d = JSON.parse(latestReport.data);
+        if (d.finalists && Array.isArray(d.finalists)) {
+          const currentH = d.finalists;
+          const count = currentH.length;
+          const wins = currentH.filter(s => (s.roi || 0) > 0).length;
+          const winRate = count > 0 ? (wins / count) * 100 : 0;
+          const avgRoi = count > 0 ? currentH.reduce((sum, s) => sum + (s.roi || 0), 0) / count : 0;
+          const totalRoi = currentH.reduce((sum, s) => sum + (s.roi || 0), 0);
+
+          stats.currentHoldings = { count, wins, winRate, avgRoi, totalRoi };
+        }
+      }
+    } catch (e) { console.warn("[Performance] Failed to calc current holdings:", e); }
 
 
     console.log(`[Performance] Calculated stats based on ${allTrades.length} sold trades.`);
@@ -797,7 +816,9 @@ app.put('/api/reports/:id/prices', async (req, res) => {
       try {
         // Fetch fresh technicals
         const ta = await analyzeStockTechnicals(stock.code);
-        const currentPrice = ta.price || stock.price;
+        // CRITICAL FIX: Use Real-time Intraday Price, not Historical Candle Price (which might be yesterday)
+        const rtPrice = await getStockPrice(stock.code);
+        const currentPrice = rtPrice > 0 ? rtPrice : (ta.price || stock.price);
 
         // CRITICAL: Preserve original entry price.
         const entryPrice = stock.entryPrice || currentPrice;
@@ -1122,10 +1143,10 @@ const runDailyAnalysis = async () => {
     nextPortfolio.forEach(p => uniqueMap.set(p.code, p));
 
     // 4. STRICT LIMIT TO 5
-    // We convert to array and take top 5.
+    // Force slice to ensure max 5 items
     // If we have > 5 keepers, we technically violate the rule "Keep all keepers" OR "Limit 5".
-    // Rules say "Keepers must be kept". So if > 5 keepers, we keep them all but add no new ones?
-    // Let's stick to 5 for now. If keepers > 5, we keep top 5 keepers.
+    // Rules say "Limit 5" is harder constraint for UI layout? 
+    // Yes, for now strict 5.
     const finalPortfolio = Array.from(uniqueMap.values()).slice(0, 5);
 
     console.log(`[Portfolio] Rebalanced. New count: ${finalPortfolio.length}`);
@@ -1145,10 +1166,10 @@ const runDailyAnalysis = async () => {
     const allCodes = [...new Set([...finalCodes, ...candidateCodes])];
 
     const priceMap = new Map();
-    await Promise.all(allCodes.map(async (code) => {
+    for (const code of allCodes) {
       const p = await getStockPrice(code);
       if (p > 0) priceMap.set(String(code), p);
-    }));
+    }
 
     // 1. Process Finalists
     const finalists = newPortfolioRaw.map(item => {

@@ -110,7 +110,7 @@ export const generateCandidates = async (): Promise<{ newsSummary: string; candi
   return response.json();
 };
 
-export const selectFinalists = async (candidates: StockCandidate[], newsSummary: string): Promise<PortfolioItem[]> => {
+export const selectFinalists = async (candidates: StockCandidate[], newsSummary: string): Promise<{ finalists: PortfolioItem[], sold: PortfolioItem[] }> => {
   const response = await fetchWithFailover('/api/analyze/finalists', {
     method: 'POST',
     headers: {
@@ -125,10 +125,14 @@ export const selectFinalists = async (candidates: StockCandidate[], newsSummary:
   }
   const data = await response.json();
   // Compatible with both old (array) and new ({ finalists, sold }) API response
+  // New API format: { finalists: [], sold: [] }
   if (data.finalists && Array.isArray(data.finalists)) {
-    return data.finalists;
+    return {
+      finalists: data.finalists,
+      sold: data.sold || []
+    };
   }
-  return Array.isArray(data) ? data : [];
+  return Array.isArray(data) ? { finalists: data, sold: [] } : { finalists: [], sold: [] };
 };
 
 export const updateStockPricesAPI = async (stocks: any[]): Promise<any[]> => {

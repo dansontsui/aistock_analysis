@@ -36,6 +36,7 @@ export interface DailyReport {
   newsSummary: string;
   candidates: StockCandidate[];
   finalists: PortfolioItem[];
+  sold?: PortfolioItem[];
   sources?: WebSource[];
   timestamp: number;
 }

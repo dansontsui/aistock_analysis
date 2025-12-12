@@ -18,6 +18,7 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'today' | 'history' | 'settings'>('today');
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [isDownloading, setIsDownloading] = useState(false);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   useEffect(() => {
     loadHistory();
@@ -26,6 +27,7 @@ const App: React.FC = () => {
   const loadHistory = async () => {
     const data = await getDailyReports();
     setHistory(data);
+    setRefreshTrigger(prev => prev + 1); // Also refresh dashboard
   };
 
   const downloadDb = async () => {
@@ -112,7 +114,9 @@ const App: React.FC = () => {
 
       // Step 2: Pick Top 3
       const step2Result = await selectFinalists(step1Result.candidates, step1Result.newsSummary);
-      setFinalists(step2Result);
+      setFinalists(step2Result.finalists);
+      // We might want to show sold items in UI too, but for now just save them.
+      const soldItems = step2Result.sold;
 
       setStatus(AnalysisStatus.SAVING);
 
@@ -122,7 +126,8 @@ const App: React.FC = () => {
         date: today,
         newsSummary: step1Result.newsSummary,
         candidates: step1Result.candidates,
-        finalists: step2Result,
+        finalists: step2Result.finalists,
+        sold: soldItems,
         sources: step1Result.sources,
         timestamp: Date.now()
       };
@@ -160,7 +165,7 @@ const App: React.FC = () => {
                 台股 AI 分析師
               </h1>
               <span className="text-xs text-slate-500 font-mono mt-0.5">
-                v2.6.2 <span className="text-indigo-600 font-bold bg-indigo-50 px-1 rounded">Latest: 觀察名單新增 AI 選股理由</span>
+                v2.7.1 <span className="text-indigo-600 font-bold bg-indigo-50 px-1 rounded">Latest: 績效儀表板升級 (含未實現損益)</span>
               </span>
             </div>
           </div>
@@ -365,7 +370,7 @@ const App: React.FC = () => {
 
         {activeTab === 'history' && (
           <div className="space-y-8">
-            <PerformanceDashboard />
+            <PerformanceDashboard refreshTrigger={refreshTrigger} />
             <HistoryTable reports={history} onRefresh={loadHistory} />
           </div>
         )}

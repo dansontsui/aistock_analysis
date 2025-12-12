@@ -14,6 +14,7 @@ interface PerformanceData {
     month6: Stats;
     year1: Stats;
     allTime: Stats;
+    currentHoldings?: Stats;
 }
 
 const StatCard: React.FC<{ label: string; stats: Stats; highlight?: boolean }> = ({ label, stats, highlight }) => {
@@ -44,17 +45,18 @@ const StatCard: React.FC<{ label: string; stats: Stats; highlight?: boolean }> =
     );
 };
 
-const PerformanceDashboard: React.FC = () => {
+const PerformanceDashboard: React.FC<{ refreshTrigger: number }> = ({ refreshTrigger }) => {
     const [data, setData] = useState<PerformanceData | null>(null);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
+        setLoading(true);
         fetch('http://localhost:8080/api/performance')
             .then(res => res.json())
             .then(setData)
             .catch(console.error)
             .finally(() => setLoading(false));
-    }, []);
+    }, [refreshTrigger]);
 
     if (loading) return <div className="text-center py-4 text-slate-400">載入績效數據中...</div>;
     if (!data) return null;
@@ -68,7 +70,9 @@ const PerformanceDashboard: React.FC = () => {
                 <StatCard label="近 30 天" stats={data.month1} />
                 <StatCard label="近 3 個月" stats={data.month3} highlight={true} />
                 <StatCard label="近半年" stats={data.month6} />
-                <StatCard label="近一年" stats={data.year1} />
+                {data.currentHoldings && (
+                    <StatCard label="目前持倉 (未實現)" stats={data.currentHoldings} highlight={true} />
+                )}
             </div>
         </div>
     );
