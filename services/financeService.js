@@ -310,7 +310,15 @@ export const calculatePerformanceStats = (db) => {
 
         return stats;
     } catch (error) {
-        console.error("[FinanceService] Error:", error);
-        return null;
+        console.warn("[FinanceService] Error calc stats (returning empty):", error.message);
+        // Return empty stats structure so UI doesn't crash/hide
+        return {
+            month1: { count: 0, wins: 0, winRate: 0, avgRoi: 0, totalRoi: 0 },
+            month3: { count: 0, wins: 0, winRate: 0, avgRoi: 0, totalRoi: 0 },
+            month6: { count: 0, wins: 0, winRate: 0, avgRoi: 0, totalRoi: 0 },
+            year1: { count: 0, wins: 0, winRate: 0, avgRoi: 0, totalRoi: 0 },
+            allTime: { count: 0, wins: 0, winRate: 0, avgRoi: 0, totalRoi: 0 },
+            currentHoldings: { count: 0, wins: 0, winRate: 0, avgRoi: 0, totalRoi: 0 }
+        };
     }
 };
