@@ -131,45 +131,68 @@ export const sendDailyReportEmail = async (report, subscribers = []) => {
         <p style="line-height: 1.6;">${report.newsSummary}</p>
       </div>
 
-      <div style="margin-top: 30px; background-color: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); border: 1px solid #e5e7eb;">
-        <h2 style="font-size: 1.25rem; font-weight: bold; margin-bottom: 15px; border-left: 4px solid #8b5cf6; padding-left: 10px;">📊 績效追蹤 (Performance)</h2>
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px;">
-          ${(() => {
+      <div style="margin-top: 30px; background-color: #ffffff; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px -3px rgba(0, 0, 0, 0.1); border: 1px solid #e5e7eb;">
+        <h2 style="font-size: 1.25rem; font-weight: 800; margin: 0 0 20px 0; border-left: 5px solid #6366f1; padding-left: 12px; color: #111827; letter-spacing: -0.025em;">📊 績效追蹤 (Performance)</h2>
+        
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: separate; border-spacing: 12px 0;">
+          <tr>
+            ${(() => {
       const stats = report.performance;
-      if (!stats) return '<p>暫無績效數據</p>';
+      if (!stats) return '<td colspan="3" style="text-align:center;">暫無績效數據</td>';
 
-      const renderCard = (label, data, isHoldings = false) => {
+      const renderCell = (label, data, isHoldings = false) => {
         if (!data) return '';
-        const wrColor = data.winRate >= 50 ? '#dc2626' : '#059669';
-        const roiColor = data.totalRoi >= 0 ? '#dc2626' : '#059669';
-        const avgColor = data.avgRoi >= 0 ? '#dc2626' : '#059669';
+        // Taiwan Stock Colors: Red is Good (Up), Green is Bad (Down)
+        const getCol = (val) => val > 0 ? '#dc2626' : (val < 0 ? '#16a34a' : '#4b5563'); // Dark Red / Green
+        const getBg = (val) => val > 0 ? '#fef2f2' : (val < 0 ? '#f0fdf4' : '#f9fafb'); // Light Red / Green BG
+
+        // Colors for specific metrics
+        const totalRoiColor = getCol(data.totalRoi);
+        const bgStyle = isHoldings ? 'background: linear-gradient(145deg, #eef2ff 0%, #e0e7ff 100%); border: 1px solid #818cf8;' : 'background-color: #f8fafc; border: 1px solid #e2e8f0;';
 
         return `
-               <div style="border: 1px solid ${isHoldings ? '#818cf8' : '#e5e7eb'}; background-color: ${isHoldings ? '#eef2ff' : '#f9fafb'}; border-radius: 8px; padding: 15px; text-align: center;">
-                 <h3 style="margin: 0 0 10px 0; color: #6b7280; font-size: 0.85em; font-weight: bold;">${label}</h3>
-                 <div style="margin-bottom: 5px;">
-                    <span style="font-size: 0.8em; color: #9ca3af;">Win Rate</span><br/>
-                    <strong style="color: ${wrColor}; font-size: 1.2em;">${data.winRate ? data.winRate.toFixed(0) : 0}%</strong>
-                 </div>
-                 <div style="margin-bottom: 5px;">
-                    <span style="font-size: 0.8em; color: #9ca3af;">Avg ROI</span><br/>
-                    <strong style="color: ${avgColor}; font-size: 1.1em;">${data.avgRoi ? data.avgRoi.toFixed(1) : 0}%</strong>
-                 </div>
-                 <div>
-                    <span style="font-size: 0.8em; color: #9ca3af;">Total ROI</span><br/>
-                    <strong style="color: ${roiColor}; font-size: 1.1em;">${data.totalRoi ? data.totalRoi.toFixed(1) : 0}%</strong>
-                 </div>
-               </div>
-               `;
+                 <td width="33%" valign="top" style="${bgStyle} border-radius: 12px; padding: 16px; vertical-align: top;">
+                   <div style="text-align: center;">
+                      <h3 style="margin: 0 0 12px 0; color: #475569; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700;">${label}</h3>
+                      
+                      <!-- Main Big Number (Total ROI) -->
+                      <div style="font-size: 28px; font-weight: 800; color: ${totalRoiColor}; line-height: 1;">
+                        ${data.totalRoi ? (data.totalRoi > 0 ? '+' : '') + data.totalRoi.toFixed(1) : '0.0'}%
+                      </div>
+                      <div style="font-size: 11px; color: #94a3b8; margin-bottom: 12px;">Total ROI</div>
+
+                      <!-- Divider -->
+                      <div style="height: 1px; background-color: #e2e8f0; margin: 10px 15px;"></div>
+
+                      <!-- Sub Stats -->
+                      <table width="100%" cellpadding="0" cellspacing="0">
+                        <tr>
+                          <td width="50%" style="text-align: center; border-right: 1px solid #e2e8f0;">
+                             <div style="font-size: 11px; color: #64748b;">Win Rate</div>
+                             <div style="font-size: 14px; font-weight: 700; color: #334155;">${data.winRate ? data.winRate.toFixed(0) : 0}%</div>
+                          </td>
+                          <td width="50%" style="text-align: center;">
+                             <div style="font-size: 11px; color: #64748b;">Avg ROI</div>
+                             <div style="font-size: 14px; font-weight: 700; color: ${getCol(data.avgRoi)};">
+                               ${data.avgRoi ? (data.avgRoi > 0 ? '+' : '') + data.avgRoi.toFixed(1) : '0.0'}%
+                             </div>
+                          </td>
+                        </tr>
+                      </table>
+                   </div>
+                 </td>
+                 `;
       };
 
+      // Use an empty cell if we want spacing, but separate border-spacing handles it.
       return [
-        renderCard('近 30 天', stats.month1),
-        renderCard('近 3 個月', stats.month3),
-        renderCard('目前持倉 (未實現)', stats.currentHoldings, true)
+        renderCell('近 30 天績效', stats.month1, false),
+        renderCell('近 3 個月績效', stats.month3, false),
+        renderCell('目前持倉 (未實現)', stats.currentHoldings, true)
       ].join('');
     })()}
-        </div>
+          </tr>
+        </table>
       </div>
 
       <div style="margin-top: 30px; background-color: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); border: 1px solid #e5e7eb;">
