@@ -523,8 +523,9 @@ app.post('/api/analyze/finalists', async (req, res) => {
     // 3. Price Validation & Merging
     console.log("[Price Check] Fetching real-time prices (via Yahoo Finance)...");
 
-    // Helper to get prices for all items in parallel
-    const allCodes = [...new Set(newPortfolioRaw.map(i => i.code).concat(currentPortfolio.map(i => i.code)))];
+    // Helper to get prices for all items in parallel (Fetch all potential used codes)
+    // We use finalPortfolio here to ensure we only fetch for the 5 finalists
+    const allCodes = [...new Set(finalPortfolio.map(i => i.code).concat(currentPortfolio.map(i => i.code)))];
     const priceMap = new Map();
 
     await Promise.all(allCodes.map(async (code) => {
@@ -532,7 +533,7 @@ app.post('/api/analyze/finalists', async (req, res) => {
       if (price > 0) priceMap.set(String(code), price);
     }));
 
-    const result = newPortfolioRaw.map(item => {
+    const result = finalPortfolio.map(item => {
       const verifiedPrice = priceMap.get(item.code);
       const currentPrice = (verifiedPrice && verifiedPrice > 0) ? verifiedPrice : (item.currentPrice || 0);
 
@@ -723,8 +724,8 @@ app.get('/api/performance', (req, res) => {
 // Reports: Create
 app.post('/api/reports', (req, res) => {
   try {
-    const { date, timestamp, newsSummary, candidates, finalists, sources } = req.body;
-    const jsonData = JSON.stringify({ candidates, finalists, sources });
+    const { date, timestamp, newsSummary, candidates, finalists, sources, sold } = req.body;
+    const jsonData = JSON.stringify({ candidates, finalists, sources, sold: sold || [] });
     const info = db.prepare('INSERT INTO daily_reports (date, timestamp, newsSummary, data) VALUES (?, ?, ?, ?)').run(date, timestamp, newsSummary, jsonData);
     res.json({ id: info.lastInsertRowid.toString(), success: true });
   } catch (error) { res.status(500).json({ error: 'Save Failed' }); }
@@ -848,20 +849,28 @@ app.put('/api/reports/:id/prices', async (req, res) => {
     // The route is PUT /api/reports/:id/prices.
     // Let's also update sold list prices here so the user sees fresh data for sold items too.
     if (soldList.length > 0) {
-      console.log(`[Auto-Decision] Updating prices for ${soldList.length} sold stocks...`);
-      const updatedSold = await Promise.all(soldList.map(async (s) => {
+      console.log(`[Auto-Decision] Updating prices for top 10 sold stocks (Sequential)...`);
+
+      const updatedSold = [];
+      const toUpdate = soldList.slice(0, 10); // Only update displayed items
+      const rest = soldList.slice(10); // Keep older history unchanged
+
+      for (const s of toUpdate) {
         try {
+          // Sequential await ensures we don't burst the API
           const price = await getStockPrice(s.code);
+          console.log(`[Debug] Update Sold ${s.code}: ${s.currentPrice} -> ${price}`);
           if (price > 0) {
-            return { ...s, currentPrice: price };
+            updatedSold.push({ ...s, currentPrice: price });
+          } else {
+            updatedSold.push(s);
           }
-          return s;
         } catch (e) {
-          console.error(`[Debug] Failed to update ${s.code}`, e);
-          return s;
+          console.error(`[Auto-Decision] Failed to update ${s.code}`, e);
+          updatedSold.push(s);
         }
-      }));
-      newData.sold = updatedSold;
+      }
+      newData.sold = [...updatedSold, ...rest];
     }
 
     db.prepare('UPDATE daily_reports SET data = ? WHERE id = ?').run(JSON.stringify(newData), id);

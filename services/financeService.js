@@ -28,7 +28,13 @@ const callFugle = async (endpoint) => {
         }
         return await response.json();
     } catch (error) {
-        console.error(`[Fugle] Request failed: ${url} `, error.message);
+        // Suppress 404 logs (Resource Not Found = Invalid Stock Code)
+        if (error.message.includes('404')) {
+            // console.warn(`[Fugle] Symbol not found (404): ${endpoint}`);
+            // Throwing is fine, caller handles it. just don't console.error big noise.
+        } else {
+            console.error(`[Fugle] Request failed: ${url} `, error.message);
+        }
         throw error;
     }
 };
@@ -131,12 +137,15 @@ export async function analyzeStockTechnicals(code) {
         return analysis;
 
     } catch (err) {
-        console.error(`[FinanceService] Error analyzing ${code}: `, err.message);
+        // If it's a 404, it's just an invalid code, no need to scream error.
+        if (!err.message.includes('404')) {
+            console.error(`[FinanceService] Error analyzing ${code}: `, err.message);
+        }
         return {
             code,
             error: err.message,
             action: 'NEUTRAL',
-            technicalReason: 'API 錯誤或無資料',
+            technicalReason: '查無資料/代號錯誤',
             signals: []
         };
     }
