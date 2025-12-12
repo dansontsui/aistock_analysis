@@ -1,4 +1,4 @@
-import { SMA, RSI } from 'technicalindicators';
+﻿import { SMA, RSI } from 'technicalindicators';
 
 const BASE_URL = 'https://api.fugle.tw/marketdata/v1.0/stock';
 
@@ -61,7 +61,7 @@ export async function analyzeStockTechnicals(code) {
             return {
                 code,
                 action: 'NEUTRAL',
-                technicalReason: '資料不足無法分析',
+                technicalReason: '鞈?銝雲?⊥???',
                 signals: [],
                 price: 0,
                 rsi: 50
@@ -107,13 +107,13 @@ export async function analyzeStockTechnicals(code) {
         if (currentRSI > 55) {
             analysis.signals.push('RSI_BULLISH');
             analysis.action = 'BUY';
-            analysis.technicalReason += `RSI強勢(${currentRSI.toFixed(1)} > 55) 動能強勁; `;
+            analysis.technicalReason += `RSI?(${currentRSI.toFixed(1)} > 55) ?撘瑕?; `;
         } else if (currentRSI < 45) {
             analysis.signals.push('RSI_BEARISH');
             analysis.action = 'SELL';
-            analysis.technicalReason += `RSI轉弱(${currentRSI.toFixed(1)} < 45) 動能不足; `;
+            analysis.technicalReason += `RSI頧摹(${currentRSI.toFixed(1)} < 45) ?銝雲; `;
         } else {
-            analysis.technicalReason += `RSI中性(${currentRSI.toFixed(1)}); `;
+            analysis.technicalReason += `RSI?斗(${currentRSI.toFixed(1)}); `;
         }
 
         // MA Logic
@@ -125,8 +125,8 @@ export async function analyzeStockTechnicals(code) {
             if (analysis.action === 'HOLD') analysis.action = 'SELL';
         }
 
-        if (analysis.action === 'BUY') analysis.technicalReason = `[強勢買進] ${analysis.technicalReason} `;
-        if (analysis.action === 'SELL') analysis.technicalReason = `[弱勢賣出] ${analysis.technicalReason} `;
+        if (analysis.action === 'BUY') analysis.technicalReason = `?撘瑕] ${analysis.technicalReason} `;
+        if (analysis.action === 'SELL') analysis.technicalReason = `?撘勗] ${analysis.technicalReason} `;
 
         return analysis;
 
@@ -136,7 +136,7 @@ export async function analyzeStockTechnicals(code) {
             code,
             error: err.message,
             action: 'NEUTRAL',
-            technicalReason: 'API 錯誤或無資料',
+            technicalReason: 'API ????航炊',
             signals: []
         };
     }
@@ -187,7 +187,27 @@ export async function filterCandidates(candidates) {
             // It already has the 1.1s sleep built-in
             const ta = await analyzeStockTechnicals(code);
 
+            // Access local scope historical if possible? 
+            // analyzeStockTechnicals calls callFugle which has delay.
+            // But we also need Volume. analyzeStockTechnicals returns RSI and Close, but maybe not Volume?
+            // Actually it calculates RSI/MA from historical.
+            // Let's check validStocks push logic.
+
             if (ta.error || ta.price === 0) continue;
+
+            // We need Volume. analyzeStockTechnicals internal 'historical' has volume, but it returns 'analysis' object.
+            // To properly filter volume, we should probably fetch data directly here or modify analyzeStockTechnicals to return volume.
+            // BUT, to keep it simple and efficient (1 call per stock), let's assume if it passed 'analyzeStockTechnicals' successfully,
+            // we can trust it or just skip volume check? 
+            // NO, Volume > 1000 is a requirement.
+
+            // Let's modify analyzeStockTechnicals slightly or just fetch again? 
+            // Fetching again is bad (2x requests).
+            // Let's trust Price > MA20 which is done in analyzeStockTechnicals logic (MA20_BULLISH signal).
+            // But Volume? 
+
+            // FOR NOW: Let's assume high volume if it's an AI pick, or we accept we lose volume filter strictly?
+            // BETTER:  We can fetch candles here directly.
 
             const symbol = cleanSymbol(code);
             const end = new Date();
@@ -200,13 +220,15 @@ export async function filterCandidates(candidates) {
             const raw = await callFugle(`/historical/candles/${symbol}?from=${from}&to=${to}&fields=open,high,low,close,volume`);
 
             if (!raw || !raw.data || raw.data.length < 20) continue;
-            const hist = raw.data;
+            const hist = raw.data; // Fugle is usually newest?? No, verify.
+            // Docs: "The order of data in array is ascending by date." (Oldest first)
 
             const lastData = hist[hist.length - 1];
             const close = lastData.close;
-            const volume = lastData.volume || 0;
-            // Fugle API Volume is shares
-            // Requirement: > 1000 "lots" (張 => > 1,000,000 shares)
+            const volume = lastData.volume || 0; // Fugle volume is usually in 'shares' or 'lots'? 
+            // Fugle API Volume is "Turnover (shares)" or "Volume (shares)"?
+            // Docs: volume (?漱???桐?嚗)
+            // Requirement: > 1000 "lots" (撘? => > 1,000,000 shares
 
             if (volume < 1000 * 1000) {
                 // console.log(`[Filter] ${ code } Volume too low: ${ Math.round(volume / 1000) } lots`);
@@ -239,78 +261,3 @@ export async function filterCandidates(candidates) {
     console.log(`[FinanceService] Filter result: ${validStocks.length} passed.`);
     return validStocks;
 }
-
-/**
- * Calculate Performance Statistics from Daily Reports
- * @param {import('better-sqlite3').Database} db 
- * @returns {Object|null} stats
- */
-export const calculatePerformanceStats = (db) => {
-    try {
-        const rows = db.prepare('SELECT data, timestamp FROM daily_reports ORDER BY timestamp ASC').all();
-        const allTrades = [];
-
-        rows.forEach(row => {
-            try {
-                const d = JSON.parse(row.data);
-                if (d.sold && Array.isArray(d.sold)) {
-                    d.sold.forEach(trade => {
-                        allTrades.push({
-                            ...trade,
-                            exitDate: trade.soldDate || new Date(row.timestamp).toISOString().split('T')[0],
-                            timestamp: row.timestamp
-                        });
-                    });
-                }
-            } catch (e) { /* skip bad rows */ }
-        });
-
-        const now = Date.now();
-        const oneDay = 24 * 60 * 60 * 1000;
-
-        const calculateStats = (days) => {
-            const cutoff = now - (days * oneDay);
-            const periodTrades = allTrades.filter(t => t.timestamp >= cutoff);
-            const count = periodTrades.length;
-            const wins = periodTrades.filter(t => t.roi > 0).length;
-            const winRate = count > 0 ? (wins / count) * 100 : 0;
-            const avgRoi = count > 0 ? periodTrades.reduce((sum, t) => sum + (t.roi || 0), 0) / count : 0;
-            const totalRoi = periodTrades.reduce((sum, t) => sum + (t.roi || 0), 0);
-
-            return { count, wins, winRate, avgRoi, totalRoi };
-        };
-
-        const stats = {
-            month1: calculateStats(30),
-            month3: calculateStats(90),
-            month6: calculateStats(180),
-            year1: calculateStats(365),
-            allTime: calculateStats(9999),
-            currentHoldings: { count: 0, wins: 0, winRate: 0, avgRoi: 0, totalRoi: 0 } // Default
-        };
-
-        // Calculate current holdings stats
-        try {
-            const latestReport = db.prepare('SELECT data FROM daily_reports ORDER BY timestamp DESC LIMIT 1').get();
-            if (latestReport) {
-                const d = JSON.parse(latestReport.data);
-                if (d.finalists && Array.isArray(d.finalists)) {
-                    const currentH = d.finalists;
-                    const count = currentH.length;
-                    const wins = currentH.filter(s => (s.roi || 0) > 0).length;
-                    const winRate = count > 0 ? (wins / count) * 100 : 0;
-                    const avgRoi = count > 0 ? currentH.reduce((sum, s) => sum + (s.roi || 0), 0) / count : 0;
-                    const totalRoi = currentH.reduce((sum, s) => sum + (s.roi || 0), 0);
-                    stats.currentHoldings = { count, wins, winRate, avgRoi, totalRoi };
-                }
-            }
-        } catch (e) {
-            console.warn("[FinanceService] Failed to calc current holdings:", e);
-        }
-
-        return stats;
-    } catch (error) {
-        console.error("[FinanceService] Error:", error);
-        return null;
-    }
-};
