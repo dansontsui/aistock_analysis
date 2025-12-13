@@ -245,7 +245,7 @@ const extractJson = (text) => {
     }
   }
 
-  return clean;
+  return "[]";
 };
 
 
