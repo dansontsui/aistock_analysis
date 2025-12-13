@@ -94,72 +94,64 @@ export async function analyzeStockTechnicals(code) {
         const currentMA5 = ma5[ma5.length - 1];
         const currentMA20 = ma20[ma20.length - 1];
         const currentMA60 = ma60[ma60.length - 1];
+        const lastVolume = data.data[data.data.length - 1].volume || 0;
 
         const analysis = {
             code,
             symbol: symbol,
             price: lastClose,
             change: lastClose - prevClose,
+            volume: lastVolume,
             ma5: currentMA5,
             ma20: currentMA20,
-            const currentMA60 = ma60[ma60.length - 1];
-            const lastVolume = data.data[data.data.length - 1].volume || 0;
+            ma60: currentMA60,
+            rsi: currentRSI,
+            signals: [],
+            action: 'NEUTRAL',
+            technicalReason: ''
+        };
 
-            const analysis = {
-                code,
-                symbol: symbol,
-                price: lastClose,
-                change: lastClose - prevClose,
-                volume: lastVolume, // Add Volume
-                ma5: currentMA5,
-                ma20: currentMA20,
-                ma60: currentMA60,
-                rsi: currentRSI,
-                signals: [],
-                action: 'NEUTRAL',
-                technicalReason: ''
-            };
 
-            // --- RSI Logic ---
-            if(currentRSI > 55) {
-                analysis.signals.push('RSI_BULLISH');
-        analysis.action = 'BUY';
-        analysis.technicalReason += `RSI強勢(${currentRSI.toFixed(1)} > 55) 動能強勁; `;
-    } else if (currentRSI < 45) {
-        analysis.signals.push('RSI_BEARISH');
-        analysis.action = 'SELL';
-        analysis.technicalReason += `RSI轉弱(${currentRSI.toFixed(1)} < 45) 動能不足; `;
-    } else {
-        analysis.technicalReason += `RSI中性(${currentRSI.toFixed(1)}); `;
+        // --- RSI Logic ---
+        if (currentRSI > 55) {
+            analysis.signals.push('RSI_BULLISH');
+            analysis.action = 'BUY';
+            analysis.technicalReason += `RSI強勢(${currentRSI.toFixed(1)} > 55) 動能強勁; `;
+        } else if (currentRSI < 45) {
+            analysis.signals.push('RSI_BEARISH');
+            analysis.action = 'SELL';
+            analysis.technicalReason += `RSI轉弱(${currentRSI.toFixed(1)} < 45) 動能不足; `;
+        } else {
+            analysis.technicalReason += `RSI中性(${currentRSI.toFixed(1)}); `;
+        }
+
+        // MA Logic
+        if (lastClose > currentMA20) {
+            analysis.signals.push('MA20_BULLISH');
+            if (analysis.action === 'NEUTRAL') analysis.action = 'HOLD';
+        } else {
+            analysis.signals.push('MA20_BEARISH');
+            if (analysis.action === 'HOLD') analysis.action = 'SELL';
+        }
+
+        if (analysis.action === 'BUY') analysis.technicalReason = `[強勢買進] ${analysis.technicalReason} `;
+        if (analysis.action === 'SELL') analysis.technicalReason = `[弱勢賣出] ${analysis.technicalReason} `;
+
+        return analysis;
+
+    } catch (err) {
+        // If it's a 404, it's just an invalid code, no need to scream error.
+        if (!err.message.includes('404')) {
+            console.error(`[FinanceService] Error analyzing ${code}: `, err.message);
+        }
+        return {
+            code,
+            error: err.message,
+            action: 'NEUTRAL',
+            technicalReason: '查無資料/代號錯誤',
+            signals: []
+        };
     }
-
-    // MA Logic
-    if (lastClose > currentMA20) {
-        analysis.signals.push('MA20_BULLISH');
-        if (analysis.action === 'NEUTRAL') analysis.action = 'HOLD';
-    } else {
-        analysis.signals.push('MA20_BEARISH');
-        if (analysis.action === 'HOLD') analysis.action = 'SELL';
-    }
-
-    if (analysis.action === 'BUY') analysis.technicalReason = `[強勢買進] ${analysis.technicalReason} `;
-    if (analysis.action === 'SELL') analysis.technicalReason = `[弱勢賣出] ${analysis.technicalReason} `;
-
-    return analysis;
-
-} catch (err) {
-    // If it's a 404, it's just an invalid code, no need to scream error.
-    if (!err.message.includes('404')) {
-        console.error(`[FinanceService] Error analyzing ${code}: `, err.message);
-    }
-    return {
-        code,
-        error: err.message,
-        action: 'NEUTRAL',
-        technicalReason: '查無資料/代號錯誤',
-        signals: []
-    };
-}
 }
 
 /**
