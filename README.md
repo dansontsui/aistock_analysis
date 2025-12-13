@@ -18,3 +18,9 @@ View your app in AI Studio: https://ai.studio/apps/drive/1Yuz1259B5UaWXOrXHUn-h6
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+
+## [cloud trigger ]
+https://stock-analyst-service-1095113025304.asia-east1.run.app/api/cron/trigger
+## local trigger
+http://localhost:8080/api/cron/trigger

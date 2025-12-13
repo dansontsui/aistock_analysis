@@ -102,53 +102,64 @@ export async function analyzeStockTechnicals(code) {
             change: lastClose - prevClose,
             ma5: currentMA5,
             ma20: currentMA20,
-            ma60: currentMA60,
-            rsi: currentRSI,
-            signals: [],
-            action: 'NEUTRAL',
-            technicalReason: ''
-        };
+            const currentMA60 = ma60[ma60.length - 1];
+            const lastVolume = data.data[data.data.length - 1].volume || 0;
 
-        // --- RSI Logic ---
-        if (currentRSI > 55) {
-            analysis.signals.push('RSI_BULLISH');
-            analysis.action = 'BUY';
-            analysis.technicalReason += `RSI強勢(${currentRSI.toFixed(1)} > 55) 動能強勁; `;
-        } else if (currentRSI < 45) {
-            analysis.signals.push('RSI_BEARISH');
-            analysis.action = 'SELL';
-            analysis.technicalReason += `RSI轉弱(${currentRSI.toFixed(1)} < 45) 動能不足; `;
-        } else {
-            analysis.technicalReason += `RSI中性(${currentRSI.toFixed(1)}); `;
-        }
+            const analysis = {
+                code,
+                symbol: symbol,
+                price: lastClose,
+                change: lastClose - prevClose,
+                volume: lastVolume, // Add Volume
+                ma5: currentMA5,
+                ma20: currentMA20,
+                ma60: currentMA60,
+                rsi: currentRSI,
+                signals: [],
+                action: 'NEUTRAL',
+                technicalReason: ''
+            };
 
-        // MA Logic
-        if (lastClose > currentMA20) {
-            analysis.signals.push('MA20_BULLISH');
-            if (analysis.action === 'NEUTRAL') analysis.action = 'HOLD';
-        } else {
-            analysis.signals.push('MA20_BEARISH');
-            if (analysis.action === 'HOLD') analysis.action = 'SELL';
-        }
-
-        if (analysis.action === 'BUY') analysis.technicalReason = `[強勢買進] ${analysis.technicalReason} `;
-        if (analysis.action === 'SELL') analysis.technicalReason = `[弱勢賣出] ${analysis.technicalReason} `;
-
-        return analysis;
-
-    } catch (err) {
-        // If it's a 404, it's just an invalid code, no need to scream error.
-        if (!err.message.includes('404')) {
-            console.error(`[FinanceService] Error analyzing ${code}: `, err.message);
-        }
-        return {
-            code,
-            error: err.message,
-            action: 'NEUTRAL',
-            technicalReason: '查無資料/代號錯誤',
-            signals: []
-        };
+            // --- RSI Logic ---
+            if(currentRSI > 55) {
+                analysis.signals.push('RSI_BULLISH');
+        analysis.action = 'BUY';
+        analysis.technicalReason += `RSI強勢(${currentRSI.toFixed(1)} > 55) 動能強勁; `;
+    } else if (currentRSI < 45) {
+        analysis.signals.push('RSI_BEARISH');
+        analysis.action = 'SELL';
+        analysis.technicalReason += `RSI轉弱(${currentRSI.toFixed(1)} < 45) 動能不足; `;
+    } else {
+        analysis.technicalReason += `RSI中性(${currentRSI.toFixed(1)}); `;
     }
+
+    // MA Logic
+    if (lastClose > currentMA20) {
+        analysis.signals.push('MA20_BULLISH');
+        if (analysis.action === 'NEUTRAL') analysis.action = 'HOLD';
+    } else {
+        analysis.signals.push('MA20_BEARISH');
+        if (analysis.action === 'HOLD') analysis.action = 'SELL';
+    }
+
+    if (analysis.action === 'BUY') analysis.technicalReason = `[強勢買進] ${analysis.technicalReason} `;
+    if (analysis.action === 'SELL') analysis.technicalReason = `[弱勢賣出] ${analysis.technicalReason} `;
+
+    return analysis;
+
+} catch (err) {
+    // If it's a 404, it's just an invalid code, no need to scream error.
+    if (!err.message.includes('404')) {
+        console.error(`[FinanceService] Error analyzing ${code}: `, err.message);
+    }
+    return {
+        code,
+        error: err.message,
+        action: 'NEUTRAL',
+        technicalReason: '查無資料/代號錯誤',
+        signals: []
+    };
+}
 }
 
 /**
@@ -192,52 +203,40 @@ export async function filterCandidates(candidates) {
         console.log(`[Filter] Checking ${code}...`);
 
         try {
-            // Re-use analyzeStockTechnicals to get OHLCV and RSI
-            // It already has the 1.1s sleep built-in
+            // Re-use analyzeStockTechnicals to get OHLCV and RSI (Consistent Formula!)
             const ta = await analyzeStockTechnicals(code);
 
             if (ta.error || ta.price === 0) continue;
 
-            const symbol = cleanSymbol(code);
-            const end = new Date();
-            const start = new Date();
-            start.setDate(start.getDate() - 40);
-            const from = start.toISOString().split('T')[0];
-            const to = end.toISOString().split('T')[0];
+            const close = ta.price;
+            const ma20 = ta.ma20;
+            const currentRSI = ta.rsi;
+            const volume = ta.volume || 0;
 
-            // This call sleeps 1s
-            const raw = await callFugle(`/historical/candles/${symbol}?from=${from}&to=${to}&fields=open,high,low,close,volume`);
-
-            if (!raw || !raw.data || raw.data.length < 20) continue;
-            const hist = raw.data;
-
-            const lastData = hist[hist.length - 1];
-            const close = lastData.close;
-            const volume = lastData.volume || 0;
-            // Fugle API Volume is shares
-            // Requirement: > 1000 "lots" (張 => > 1,000,000 shares)
-
+            // Filter 1: Volume > 1000 lots
             if (volume < 1000 * 1000) {
                 // console.log(`[Filter] ${ code } Volume too low: ${ Math.round(volume / 1000) } lots`);
                 continue;
             }
 
-            const closes = hist.map(d => d.close);
-            const sum20 = closes.slice(-20).reduce((a, b) => a + b, 0);
-            const ma20 = sum20 / 20;
-
+            // Filter 2: Price > MA20 (Uptrend)
             if (close < ma20) continue;
 
-            const rsiVal = RSI.calculate({ values: closes, period: 14 });
-            const currentRSI = rsiVal.length > 0 ? rsiVal[rsiVal.length - 1] : 50;
+            // Strict Filter: RSI MUST be > 55
+            // [TEMPORARY] User requested to disable hard filter to test AI Prompt
+            /* 
+            if (currentRSI < 55) {
+                continue;
+            }
+            */
 
             validStocks.push({
                 ...item,
                 code: code,
-                name: item.name || "", // Fugle doesn't return name in candles. We rely on AI's name for now.
+                name: item.name || "",
                 price: Number(close.toFixed(2)),
                 volume: Math.round(volume / 1000),
-                tech_note: `Price(${close.toFixed(2)}) > MA20(${ma20.toFixed(2)}) | RSI=${currentRSI.toFixed(1)} `
+                tech_note: `Price > MA20 | Strong RSI=${currentRSI.toFixed(1)}`
             });
 
         } catch (e) {

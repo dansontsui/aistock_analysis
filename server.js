@@ -405,12 +405,17 @@ app.post('/api/analyze/finalists', async (req, res) => {
 
     // 1. Fetch Current Portfolio (from the latest report)
     let currentPortfolio = [];
+    let previousSold = []; // New: Fetch previous sold items for cumulative history
+
     try {
       const latestReport = db.prepare('SELECT data FROM daily_reports ORDER BY timestamp DESC LIMIT 1').get();
       if (latestReport) {
         const data = JSON.parse(latestReport.data);
         if (data.finalists && Array.isArray(data.finalists)) {
           currentPortfolio = data.finalists;
+        }
+        if (data.sold && Array.isArray(data.sold)) {
+          previousSold = data.sold;
         }
       }
     } catch (e) { console.warn("[DB] No previous portfolio found."); }
@@ -459,8 +464,11 @@ app.post('/api/analyze/finalists', async (req, res) => {
     })))}
 
         【今日觀察名單 (Candidates)】：
-        (請從中挑選最強勢的股票填補剩餘空位。**特別注意 tech_note 欄位中的 RSI 數值**)
-        **選股標準：優先選擇 RSI > 55 的強勢動能股。避免 RSI < 45 的弱勢股。**
+        (請從中挑選最強勢的股票填補剩餘空位。**必須檢查 tech_note 欄位中的 RSI 數值**)
+        **選股絕對標準：**
+        1. **嚴格只選 RSI > 55 的強勢動能股。**
+        2. **禁止選擇 RSI < 55 的股票，違者將導致嚴重虧損。**
+        2. **禁止選擇 RSI < 55 的股票，違者將導致嚴重虧損。**
         ${JSON.stringify(candidates)}
 
         【決策任務】：
@@ -521,7 +529,7 @@ app.post('/api/analyze/finalists', async (req, res) => {
 
 
     // 3. Price Validation & Merging
-    console.log("[Price Check] Fetching real-time prices (via Yahoo Finance)...");
+    console.log("[Price Check] Fetching real-time prices (via Fugle)...");
 
     // Helper to get prices for all items in parallel (Fetch all potential used codes)
     // We use finalPortfolio here to ensure we only fetch for the 5 finalists
@@ -562,6 +570,7 @@ app.post('/api/analyze/finalists', async (req, res) => {
         code: itemCode,
         name: String(item.name),
         industry: String(item.industry),
+        industry: String(item.industry),
         reason: String(item.reason),
         entryPrice,
         entryDate,
@@ -580,7 +589,8 @@ app.post('/api/analyze/finalists', async (req, res) => {
         name: s.name,
         entryPrice: s.entryPrice,
         exitPrice: priceMap.get(s.code) || s.currentPrice, // Best effort current price
-        return: 0 // Ideally calculate final return if possible
+        return: 0,
+        soldDate: getTodayString()
       }));
 
     // Calculate final return for sold stocks
@@ -589,8 +599,14 @@ app.post('/api/analyze/finalists', async (req, res) => {
       s.roi = roi;
     });
 
-    console.log(`[Portfolio] Rebalanced. New count: ${result.length}, Sold: ${soldStocks.length}`);
-    res.json({ finalists: result, sold: soldStocks });
+    // Cumulative Sell List: Combine new sold with previous history
+    // We want the LATEST sold items at the top.
+    // Order: [New Sold Today, Previous Sold History...]
+    // Limit: 10 items total
+    const allSold = [...soldStocks, ...previousSold].slice(0, 10);
+
+    console.log(`[Portfolio] Rebalanced. New count: ${result.length}, Sold Today: ${soldStocks.length}, Total Sold History: ${allSold.length}`);
+    res.json({ finalists: result, sold: allSold });
 
 
   } catch (error) {

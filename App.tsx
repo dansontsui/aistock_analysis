@@ -165,7 +165,7 @@ const App: React.FC = () => {
                 台股 AI 分析師
               </h1>
               <span className="text-xs text-slate-500 font-mono mt-0.5">
-                v2.7.14 <span className="text-indigo-600 font-bold bg-indigo-50 px-1 rounded">Latest: 修復持股上限與賣出清單</span>
+                v2.7.15 <span className="text-indigo-600 font-bold bg-indigo-50 px-1 rounded">Latest: 修復 RSI 篩選與累積賣出名單</span>
               </span>
             </div>
           </div>

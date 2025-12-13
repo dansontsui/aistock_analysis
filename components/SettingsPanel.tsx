@@ -69,7 +69,9 @@ const DEFAULT_PROMPTS: Record<string, string> = {
 
 【今日觀察名單 (Candidates)】：
 (請從中挑選最強勢的股票填補剩餘空位。**特別注意 tech_note 欄位中的 RSI 數值**)
-**選股標準：優先選擇 RSI > 55 的強勢動能股。避免 RSI < 45 的弱勢股。**
+**選股絕對標準：**
+1. **嚴格只選 RSI > 55 的強勢動能股。**
+2. **禁止選擇 RSI < 55 的股票，違者將導致嚴重虧損。**
 {{CANDIDATES}}
 
 【決策任務】：
